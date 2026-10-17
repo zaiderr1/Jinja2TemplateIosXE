@@ -1,19 +1,40 @@
 #!/usr/bin/env python3
 """
-conf2jinja.py - turn a Cisco IOS / IOS-XE running-config into a Jinja2 template.
+conf2jinja.py - turn a Cisco IOS / IOS-XE running-config into Jinja2 templates.
 
-Every per-device value (hostname, ASNs, IPs, masks, VLANs, VRFs, RDs, route-targets,
-physical interfaces, descriptions, secrets) is replaced by a Jinja2 variable.
-Two files are written:
-    <name>.j2         the template
-    <name>_vars.yml   the variables with the values found in this config
-The script then renders the template with those values and checks that the result
-is identical to the original config (round-trip check).
+Every per-device value (hostname, ASNs, IPs, masks, dot1q, VLANs, VRFs, RDs,
+route-targets, physical interfaces, descriptions, secrets) becomes a Jinja2 variable.
+
+Output (default: one file per config block):
+    <outdir>/<name>/
+        main.j2           includes every block, in config order
+        base.j2           hostname, services, AAA, users... (before the first block)
+        vrf.j2            vrf definition / ip vrf
+        vlans.j2          vlan N
+        interfaces.j2     interface ...
+        bgp.j2            router bgp
+        igp.j2            router ospf / isis / eigrp / rip
+        static_routes.j2  ip route / ipv6 route
+        prefix_lists.j2   ip prefix-list
+        bgp_lists.j2      ip community-list / extcommunity-list / as-path
+        route_maps.j2     route-map
+        acls.j2           access-lists
+        services.j2       everything else after the first block (snmp, tacacs, line, banner...)
+        vars.yml          the variables, shared by all blocks
+Only the blocks present in the config are written.
+
+With --single-file you get the old behaviour: <name>.j2 + <name>_vars.yml.
+
+Rules worth knowing:
+  - A sub-interface number and its "encapsulation dot1Q" always use the same
+    variable ({{ dot1q_N }}). A warning is printed if a config has them different.
+  - Each block is checked: rendered with vars.yml it must give back exactly the
+    original lines of that block (round-trip check).
 
 Usage:
     python conf2jinja.py running-config.txt
-    python conf2jinja.py running-config.txt -o models --redact-secrets
-    python conf2jinja.py running-config.txt --keep-interfaces
+    python conf2jinja.py running-config.txt -o models -n CE_model --redact-secrets
+    python conf2jinja.py running-config.txt --single-file
 
 Needs: pip install jinja2   (only for the round-trip check)
 """
@@ -34,14 +55,29 @@ NOISE = [
     r"^ntp clock-period",
 ]
 
+# Top-level sections -> block file. First match wins.
+BLOCKS = [
+    ("vrf", r"^(?:vrf definition|ip vrf) "),
+    ("vlans", r"^vlan \d"),
+    ("interfaces", r"^interface "),
+    ("bgp", r"^router bgp "),
+    ("igp", r"^router (?:ospf|ospfv3|isis|eigrp|rip)\b"),
+    ("static_routes", r"^(?:ip|ipv6) route "),
+    ("prefix_lists", r"^(?:ip|ipv6) prefix-list "),
+    ("bgp_lists", r"^ip (?:community-list|extcommunity-list|as-path) "),
+    ("route_maps", r"^route-map "),
+    ("acls", r"^(?:ip access-list|ipv6 access-list|access-list) "),
+]
+BLOCKS = [(name, re.compile(rx)) for name, rx in BLOCKS]
+
 # kind -> pool. Values are shared inside a pool: if 64681 is local_as, every
 # later 64681 (rd, route-target, remote-as) re-uses {{ local_as }}.
 POOL = {
     "hostname": "hostname", "local_as": "asn", "remote_as": "asn", "asn": "asn",
     "router_id": "ip", "neighbor_ip": "ip", "intf_ip": "ip", "ip": "ip",
-    "prefix": "prefix", "mask": "mask", "vlan": "vlan", "vrf": "vrf",
-    "vpn_id": "vpn_id", "rt": "rt", "intf": "intf", "description": "desc",
-    "neighbor_desc": "desc", "secret": "secret",
+    "prefix": "prefix", "mask": "mask", "dot1q": "dot1q", "vlan": "vlan",
+    "vrf": "vrf", "vpn_id": "vpn_id", "rt": "rt", "intf": "intf",
+    "description": "desc", "neighbor_desc": "desc", "secret": "secret",
 }
 SINGLE = {"hostname", "local_as", "router_id"}   # named without a number
 
@@ -59,9 +95,11 @@ RULES = [
     (r"address-family ipv4 vrf (\S+)", ["vrf"]),
     (r"^\s*rd (\d+):(\d+)$", ["asn", "vpn_id"]),
     (r"route-target (?:export|import|both) (\d+):(\d+)", ["asn", "rt"]),
-    (r"^interface (\S+/\S+?)\.(\d+)$", ["intf", "vlan"]),
+    # sub-interface number and encapsulation dot1Q share the "dot1q" pool,
+    # so <intf>.110 and "encapsulation dot1Q 110" are the same variable
+    (r"^interface (\S+/\S+?)\.(\d+)$", ["intf", "dot1q"]),
     (r"^interface (\S+/\S+)$", ["intf"]),
-    (r"encapsulation dot1q (\d+)", ["vlan"]),
+    (r"(?i)encapsulation dot1q (\d+)", ["dot1q"]),
     (r"switchport access vlan (\d+)", ["vlan"]),
     (r"^vlan (\d+)$", ["vlan"]),
     (rf"ip address ({IP}) ({IP})", ["intf_ip", "mask"]),
@@ -74,6 +112,7 @@ RULES = [
 RULES = [(re.compile(rx), kinds) for rx, kinds in RULES]
 
 IP_TOKEN = re.compile(rf"(?<![\d.])({IP})(/\d{{1,2}})?(?![\d.])")
+BANNER = re.compile(r"^banner \S+ (\S{1,2})")
 
 
 def is_mask_like(value):
@@ -124,7 +163,19 @@ def clean(text):
     lines = [l.rstrip() for l in lines if not any(n.search(l) for n in noise)]
     while lines and lines[0] in ("", "!"):
         lines.pop(0)
+    while lines and lines[-1] == "":
+        lines.pop()
     return lines
+
+
+def banner_delim(line):
+    """Delimiter of a 'banner xxx ^C' line and whether the banner continues."""
+    m = BANNER.match(line)
+    if not m:
+        return None, False
+    tok = m.group(1)
+    delim = tok[:2] if tok.startswith("^") else tok[0]
+    return delim, line.count(delim) < 2
 
 
 def rule_spans(line, keep_interfaces):
@@ -174,6 +225,24 @@ def collect(lines, keep_interfaces):
     return v
 
 
+def check_dot1q(lines):
+    """Warn when a sub-interface number differs from its encapsulation dot1Q."""
+    warnings, current = [], None
+    for line in lines:
+        m = re.match(r"^interface (\S+?)\.(\d+)$", line)
+        if m:
+            current = (line, m.group(2))
+            continue
+        if not line.startswith(" "):
+            current = None
+            continue
+        e = re.search(r"(?i)encapsulation dot1q (\d+)", line)
+        if current and e and e.group(1) != current[1]:
+            warnings.append(f"{current[0]}: encapsulation dot1Q {e.group(1)} "
+                            f"differs from sub-interface number {current[1]}")
+    return warnings
+
+
 def global_subst(segment, v):
     """Replace values that are safe to replace anywhere (IPs, prefixes, VRFs,
     hostname, interfaces, 4+ digit ASNs) inside a literal piece of text."""
@@ -201,18 +270,18 @@ def global_subst(segment, v):
     return out
 
 
+def has_jinja(text):
+    return any(t in text for t in ("{{", "{%", "{#"))
+
+
 def protect(segment):
     """Literal text that already contains Jinja delimiters must stay raw."""
-    if any(t in segment for t in ("{{", "{%", "{#")):
-        return "{% raw %}" + segment + "{% endraw %}"
-    return segment
+    return "{% raw %}" + segment + "{% endraw %}" if has_jinja(segment) else segment
 
 
 def literal(segment, v):
     """Variabilize a literal piece of text, unless it holds Jinja delimiters."""
-    if any(t in segment for t in ("{{", "{%", "{#")):
-        return protect(segment)
-    return global_subst(segment, v)
+    return protect(segment) if has_jinja(segment) else global_subst(segment, v)
 
 
 def templatize(lines, v, keep_interfaces):
@@ -224,10 +293,9 @@ def templatize(lines, v, keep_interfaces):
             if delim in line:
                 in_banner = False
             continue
-        bm = re.match(r"^banner \S+ (\S{1,2})", line)
-        if bm:
-            delim = bm.group(1)[:2] if bm.group(1).startswith("^") else bm.group(1)[0]
-            in_banner = line.count(delim) < 2
+        d, cont = banner_delim(line)
+        if d:
+            delim, in_banner = d, cont
             out.append(protect(line))
             continue
 
@@ -239,6 +307,37 @@ def templatize(lines, v, keep_interfaces):
         parts.append(literal(line[pos:], v))
         out.append("".join(parts))
     return out
+
+
+def split_sections(lines):
+    """Cut the config into top-level sections and give each one a block name.
+    Returns [(block, [line indexes])]. 'end' is left out (main.j2 adds it)."""
+    sections, i, n = [], 0, len(lines)
+    seen_block = False
+    while i < n:
+        line = lines[i]
+        if line == "end" and i == n - 1:
+            break
+        idx = [i]
+        d, cont = banner_delim(line)
+        i += 1
+        if d and cont:                      # banner body until its delimiter
+            while i < n:
+                idx.append(i)
+                i += 1
+                if d in lines[idx[-1]]:
+                    break
+        # indented lines and "!" separators belong to this section
+        while i < n and (lines[i].startswith(" ") or lines[i] == "!" or lines[i] == ""):
+            idx.append(i)
+            i += 1
+        block = next((name for name, rx in BLOCKS if rx.match(line)), None)
+        if block:
+            seen_block = True
+        else:
+            block = "services" if seen_block else "base"
+        sections.append((block, idx))
+    return sections
 
 
 def yaml_str(value):
@@ -258,27 +357,112 @@ def write_vars(path, v, source, redact):
     path.write_text("\n".join(lines) + "\n")
 
 
-def roundtrip(template, v, original):
-    try:
-        from jinja2 import Environment, StrictUndefined
-    except ImportError:
-        return "skipped (pip install jinja2 to enable it)"
-    env = Environment(undefined=StrictUndefined, keep_trailing_newline=True)
-    rendered = env.from_string(template).render(**v.values)
-    if rendered == original:
-        return "OK - template + vars reproduce the config exactly"
-    a, b = original.split("\n"), rendered.split("\n")
+def first_diff(expected, got):
+    a, b = expected.split("\n"), got.split("\n")
     for i, (x, y) in enumerate(zip(a, b), start=1):
         if x != y:
-            return f"MISMATCH at line {i}:\n  config:   {x}\n  rendered: {y}"
-    return f"MISMATCH: {len(a)} lines in config, {len(b)} rendered"
+            return f"line {i}:\n    config:   {x}\n    rendered: {y}"
+    return f"{len(a)} lines in config, {len(b)} rendered"
+
+
+def jinja_env(folder=None):
+    try:
+        from jinja2 import Environment, FileSystemLoader, StrictUndefined
+    except ImportError:
+        return None
+    loader = FileSystemLoader(str(folder)) if folder else None
+    return Environment(loader=loader, undefined=StrictUndefined)
+
+
+def run_single(args, src, lines, v, tpl_lines):
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    name = args.name or src.stem
+    tpl_path, vars_path = outdir / f"{name}.j2", outdir / f"{name}_vars.yml"
+    template = "\n".join(tpl_lines)
+    tpl_path.write_text(template + "\n")
+    write_vars(vars_path, v, src.name, args.redact_secrets)
+    print(f"template : {tpl_path}")
+    print(f"variables: {vars_path}  ({len(v.values)} variables)")
+    if args.redact_secrets:
+        print("round-trip check: skipped (secrets redacted)")
+        return True
+    env = jinja_env()
+    if env is None:
+        print("round-trip check: skipped (pip install jinja2 to enable it)")
+        return True
+    rendered = env.from_string(template).render(**v.values)
+    if rendered == "\n".join(lines):
+        print("round-trip check: OK - template + vars reproduce the config exactly")
+        return True
+    print("round-trip check: MISMATCH at " + first_diff("\n".join(lines), rendered))
+    return False
+
+
+def run_blocks(args, src, lines, v, tpl_lines):
+    folder = Path(args.outdir) / (args.name or src.stem)
+    folder.mkdir(parents=True, exist_ok=True)
+    sections = split_sections(lines)
+
+    order, by_block = [], {}
+    for block, idx in sections:
+        if block not in by_block:
+            order.append(block)
+            by_block[block] = []
+        by_block[block].extend(idx)
+
+    for block in order:
+        text = "\n".join(tpl_lines[i] for i in by_block[block])
+        (folder / f"{block}.j2").write_text(text + "\n")
+    main = "\n".join("{%% include '%s.j2' %%}" % b for b in order) + "\nend\n"
+    (folder / "main.j2").write_text(main)
+    write_vars(folder / "vars.yml", v, src.name, args.redact_secrets)
+
+    print(f"folder   : {folder}")
+    for block in order:
+        print(f"  {block + '.j2':<18} {len(by_block[block]):>4} lines")
+    print(f"  {'main.j2':<18} includes {len(order)} blocks")
+    print(f"  {'vars.yml':<18} {len(v.values):>4} variables")
+
+    if args.redact_secrets:
+        print("round-trip check: skipped (secrets redacted)")
+        return True
+    env = jinja_env(folder)
+    if env is None:
+        print("round-trip check: skipped (pip install jinja2 to enable it)")
+        return True
+
+    ok = True
+    for block in order:
+        expected = "\n".join(lines[i] for i in by_block[block])
+        got = env.get_template(f"{block}.j2").render(**v.values)
+        if got != expected:
+            print(f"round-trip check: MISMATCH in {block}.j2 at " + first_diff(expected, got))
+            ok = False
+    if not ok:
+        return False
+
+    full = env.get_template("main.j2").render(**v.values)
+    original = "\n".join(lines)
+    if full == original:
+        print("round-trip check: OK - every block and main.j2 reproduce the config exactly")
+    elif sorted(full.split("\n")) == sorted(original.split("\n")):
+        print("round-trip check: OK - every block reproduces its part of the config exactly.")
+        print("  note: main.j2 groups sections by block, so some sections come out in a")
+        print("  different order than in the running-config (same lines, nothing lost).")
+    else:
+        print("round-trip check: MISMATCH in main.j2 - lines differ from the config")
+        return False
+    return True
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Cisco running-config -> Jinja2 template")
+    ap = argparse.ArgumentParser(description="Cisco running-config -> Jinja2 templates")
     ap.add_argument("config", help="running-config text file")
     ap.add_argument("-o", "--outdir", default=".", help="output folder (default: .)")
-    ap.add_argument("-n", "--name", help="output base name (default: config file name)")
+    ap.add_argument("-n", "--name", help="output name (default: config file name)")
+    ap.add_argument("--single-file", action="store_true",
+                    help="one .j2 file instead of one file per config block")
     ap.add_argument("--keep-interfaces", action="store_true",
                     help="keep physical interface names literal")
     ap.add_argument("--redact-secrets", action="store_true",
@@ -287,26 +471,14 @@ def main():
 
     src = Path(args.config)
     lines = clean(src.read_text(errors="replace"))
+    for w in check_dot1q(lines):
+        print(f"warning: {w}")
     v = collect(lines, args.keep_interfaces)
     tpl_lines = templatize(lines, v, args.keep_interfaces)
 
-    outdir = Path(args.outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
-    name = args.name or src.stem
-    tpl_path, vars_path = outdir / f"{name}.j2", outdir / f"{name}_vars.yml"
-    template = "\n".join(tpl_lines)
-    tpl_path.write_text(template)
-    write_vars(vars_path, v, src.name, args.redact_secrets)
-
-    print(f"template : {tpl_path}")
-    print(f"variables: {vars_path}  ({len(v.values)} variables)")
-    if args.redact_secrets:
-        print("round-trip check: skipped (secrets redacted)")
-    else:
-        result = roundtrip(template, v, "\n".join(lines))
-        print(f"round-trip check: {result}")
-        if result.startswith("MISMATCH"):
-            sys.exit(1)
+    run = run_single if args.single_file else run_blocks
+    if not run(args, src, lines, v, tpl_lines):
+        sys.exit(1)
 
 
 if __name__ == "__main__":

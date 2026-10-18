@@ -13,7 +13,9 @@ Needs:  pip install openpyxl jinja2
 Excel sheets (sheet names and headers: any case; columns: any order; extra
 columns are ignored; the header row can be anywhere in the first 10 rows):
   Links    VRF | Subnet | DOT1Q | Vlan | DEVICE A | Port | IP | Device B | Port | IP
-           one row per link. DEVICE A is the device configured, Device B its BGP peer.
+           one row per link. Both ends get a config: DEVICE A (Port A, IP A, neighbor
+           IP B) and Device B (Port B, IP B, neighbor IP A). Port B can stay empty
+           for a Device B you don't generate.
            A plain "Port" / "IP" column belongs to the nearest DEVICE A / Device B
            column on its left. "Port A", "IP B"... are also accepted, anywhere.
   VRFs     VRF | VPN ID                   -> rd <local AS>:<VPN ID>
@@ -25,13 +27,15 @@ columns are ignored; the header row can be anywhere in the first 10 rows):
            OS: ios-xe (templates/ios-xe/). Empty = ios-xe.
            Output name: file name without .cfg (empty = hostname).
            Only devices listed with Generate = yes are produced.
-           Without this sheet (or if it is empty): every DEVICE A, ios-xe, all blocks.
+           Without this sheet (or if it is empty): every device (A and B), ios-xe,
+           all blocks.
 
-For each DEVICE A the rows are turned into this structure, then main.j2 is rendered:
+For each device (A or B side) the rows are turned into this structure, then main.j2 is rendered:
   local_as, router_id (optional)
   vrfs:          [{name, vpn_id}]
   subinterfaces: [{name, dot1q, vrf, ip, mask}]
-  bgp_vrfs:      [{vrf, neighbors: [{ip, remote_as, device_b}]}]
+  bgp_vrfs:      [{vrf, vpn_id, neighbors: [{ip, remote_as, device_b, description}]}]
+                 (device_b = the device at the other end of the link)
 """
 import argparse
 import re
@@ -240,13 +244,50 @@ def read_generate(wb, link_hosts):
 
 
 def build_devices(links, vpn_ids, devices):
-    """Excel rows -> one data structure per DEVICE A. Returns (data, errors)."""
-    errors, data = [], {}
-    used_subifs = set()
+    """Excel rows -> one data structure per device, for BOTH ends of each link.
+    Returns (data, errors, incomplete). incomplete: devices that are Device B on a
+    row with an empty Port B (their config can't be built) -> {device: [rows]}."""
+    errors, data, incomplete = [], {}, {}
+    used_subifs = {}
+
+    def add_side(host, port, ip_local, ip_peer, peer, vrf, dot1q, net, where):
+        key = (host, port, dot1q)
+        if key in used_subifs:
+            errors.append(f"{where}: {port}.{dot1q} already used on {host} "
+                          f"({used_subifs[key]})")
+            return
+        used_subifs[key] = where
+        d = data.setdefault(host, {
+            "local_as": devices[host]["as"],
+            "vrfs": [], "subinterfaces": [], "bgp_vrfs": [],
+        })
+        if devices[host]["router_id"]:
+            d["router_id"] = devices[host]["router_id"]
+        if not any(v["name"] == vrf for v in d["vrfs"]):
+            d["vrfs"].append({"name": vrf, "vpn_id": vpn_ids[vrf]})
+        d["subinterfaces"].append({
+            "name": port,
+            "dot1q": dot1q,
+            "vrf": vrf,
+            "ip": str(ip_local),
+            "mask": str(net.netmask),
+        })
+        af = next((a for a in d["bgp_vrfs"] if a["vrf"] == vrf), None)
+        if af is None:
+            af = {"vrf": vrf, "vpn_id": vpn_ids[vrf], "neighbors": []}
+            d["bgp_vrfs"].append(af)
+        af["neighbors"].append({
+            "ip": str(ip_peer),
+            "remote_as": devices[peer]["as"],
+            "device_b": peer,                       # = the device at the other end
+            "peer": peer,
+            "description": f"{peer}-(vrf {vrf})",   # your naming standard
+        })
+
     for r in links:
         where = f"Links row {r['_row']}"
         before = len(errors)
-        host, peer, vrf = r["DEVICE A"], r["Device B"], r["VRF"]
+        host_a, host_b, vrf, dot1q = r["DEVICE A"], r["Device B"], r["VRF"], r["DOT1Q"]
         empty = [k.replace("_", " ") for k in LINKS_REQUIRED if not r[k]]
         if empty:
             errors.append(f"{where}: empty cell(s): {', '.join(empty)}")
@@ -263,49 +304,29 @@ def build_devices(links, vpn_ids, devices):
                 errors.append(f"{where}: {label} {ip} is not in {net}")
         if ip_a == ip_b:
             errors.append(f"{where}: IP A and IP B are both {ip_a}")
-        for dev in (host, peer):
+        if host_a == host_b:
+            errors.append(f"{where}: DEVICE A and Device B are both {host_a}")
+        for dev in (host_a, host_b):
             if dev not in devices:
                 errors.append(f"{where}: device '{dev}' missing in Devices sheet")
         if vrf not in vpn_ids:
             errors.append(f"{where}: VRF '{vrf}' missing in VRFs sheet")
-        if not r["DOT1Q"].isdigit() or not 1 <= int(r["DOT1Q"]) <= 4094:
-            errors.append(f"{where}: DOT1Q '{r['DOT1Q']}' must be 1-4094")
-        key = (host, r["Port_A"], r["DOT1Q"])
-        if key in used_subifs:
-            errors.append(f"{where}: {r['Port_A']}.{r['DOT1Q']} already used on {host}")
-        used_subifs.add(key)
+        if not dot1q.isdigit() or not 1 <= int(dot1q) <= 4094:
+            errors.append(f"{where}: DOT1Q '{dot1q}' must be 1-4094")
         if len(errors) > before:
             continue
 
-        d = data.setdefault(host, {
-            "local_as": devices[host]["as"],
-            "vrfs": [], "subinterfaces": [], "bgp_vrfs": [],
-        })
-        if devices[host]["router_id"]:
-            d["router_id"] = devices[host]["router_id"]
+        add_side(host_a, r["Port_A"], ip_a, ip_b, host_b, vrf, dot1q, net, where)
+        if r["Port_B"]:
+            add_side(host_b, r["Port_B"], ip_b, ip_a, host_a, vrf, dot1q, net, where)
+        else:
+            incomplete.setdefault(host_b, []).append(r["_row"])
 
-        if not any(v["name"] == vrf for v in d["vrfs"]):
-            d["vrfs"].append({"name": vrf, "vpn_id": vpn_ids[vrf]})
-
-        d["subinterfaces"].append({
-            "name": r["Port_A"],
-            "dot1q": r["DOT1Q"],
-            "vrf": vrf,
-            "ip": str(ip_a),
-            "mask": str(net.netmask),
-        })
-
-        af = next((a for a in d["bgp_vrfs"] if a["vrf"] == vrf), None)
-        if af is None:
-            af = {"vrf": vrf, "vpn_id": vpn_ids[vrf], "neighbors": []}
-            d["bgp_vrfs"].append(af)
-        af["neighbors"].append({
-            "ip": str(ip_b),
-            "remote_as": devices[peer]["as"],
-            "device_b": peer,
-            "description": f"{peer}-(vrf {vrf})",   # your naming standard
-        })
-    return data, errors
+    # a device missing a Port B on any of its links gets no config at all
+    # (a config with only some of its links would be misleading)
+    for host in incomplete:
+        data.pop(host, None)
+    return data, errors, incomplete
 
 
 def main():
@@ -337,12 +358,12 @@ def main():
         print(f"Excel problem: {e}")
         sys.exit(1)
 
-    data, errors = build_devices(links, vpn_ids, devices)
+    data, errors, incomplete = build_devices(links, vpn_ids, devices)
     if errors:
         print("Fix these errors in the Excel file first:")
         print("\n".join(f"  - {e}" for e in errors))
         sys.exit(1)
-    if not data:
+    if not data and not incomplete:
         print("No links found in the Links sheet.")
         sys.exit(1)
 
@@ -357,8 +378,12 @@ def main():
     problems, outputs = [], {}
     for job in jobs:
         tpl_dir = template_dir(job["os"])
-        if job["host"] not in data:
-            problems.append(f"{job['host']}: no rows with this DEVICE A in the Links sheet")
+        if job["host"] in incomplete:
+            rows = ", ".join(str(n) for n in incomplete[job["host"]])
+            problems.append(f"{job['host']}: is Device B with an empty Port B "
+                            f"(Links row(s) {rows})")
+        elif job["host"] not in data:
+            problems.append(f"{job['host']}: not found as DEVICE A or Device B in the Links sheet")
         elif not (tpl_dir / "main.j2").exists():
             what = f"in {tpl_dir}" if args.templates else f"for {job['os']}"
             problems.append(f"{job['host']}: no main.j2 {what} "
@@ -424,9 +449,14 @@ def main():
         if lenient and SkipUndefined.seen:
             print(f"  left out (not in Excel): {', '.join(sorted(SkipUndefined.seen))}")
 
-    skipped = [h for h in data if h not in {j["host"] for j in jobs}]
+    selected = {j["host"] for j in jobs}
+    skipped = [h for h in data if h not in selected]
     if skipped:
         print(f"not generated (not selected in Generate sheet): {', '.join(skipped)}")
+    no_port = [h for h in incomplete if h not in selected]
+    if no_port:
+        print("not generated (Port B empty, so the Device B side can't be built): " +
+              ", ".join(f"{h} (row {', '.join(map(str, incomplete[h]))})" for h in no_port))
     if failed:
         sys.exit(1)
 

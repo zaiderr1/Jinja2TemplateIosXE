@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Generate device configs from netgen_input.xlsx with the templates in templates/<os>/.
 
-Usage:  python generate.py [netgen_input.xlsx] [output_dir]
+Usage:  python generate.py [netgen_input.xlsx] [output_dir] [--templates FOLDER]
+        --templates FOLDER: use main.j2 from FOLDER for every device, instead of
+        templates/<os>/ chosen from the OS column of the Generate sheet.
+        With --templates (e.g. drafts made by conf2jinja.py), only what the Excel
+        data provides is generated: loops over lists the Excel doesn't fill
+        produce nothing, and lines using a value the Excel doesn't have are left
+        out. Everything left out is listed. Add --strict to stop instead.
 Needs:  pip install openpyxl jinja2
 
 Excel sheets (sheet names and headers: any case; columns: any order; extra
@@ -27,15 +33,48 @@ For each DEVICE A the rows are turned into this structure, then main.j2 is rende
   subinterfaces: [{name, dot1q, vrf, ip, mask}]
   bgp_vrfs:      [{vrf, neighbors: [{ip, remote_as, device_b}]}]
 """
+import argparse
 import re
 import sys
 import ipaddress
 from pathlib import Path
 
 from openpyxl import load_workbook
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from jinja2 import ChainableUndefined, Environment, FileSystemLoader, StrictUndefined
+from jinja2.exceptions import TemplateError, UndefinedError
 
 HERE = Path(__file__).resolve().parent
+SKIP = "\x00SKIP\x00"      # marks a line that used a value the Excel doesn't provide
+
+
+class SkipUndefined(ChainableUndefined):
+    """Missing value: loops over it produce nothing, a line printing it is dropped.
+    Every missing name is recorded in SkipUndefined.seen for the report."""
+    seen = set()
+
+    def _note(self):
+        SkipUndefined.seen.add(self._undefined_name or "?")
+
+    def __str__(self):
+        self._note()
+        return SKIP
+
+    def __iter__(self):
+        self._note()
+        return iter(())
+
+
+class BlockLoader(FileSystemLoader):
+    """Loads templates from a folder; block files switched off in the Generate
+    sheet (vrf.j2, interfaces.j2, bgp.j2) come back empty."""
+    def __init__(self, folder, disabled):
+        super().__init__(str(folder))
+        self.disabled = {f"{b}.j2" for b in disabled}
+
+    def get_source(self, environment, template):
+        if template in self.disabled:
+            return "", None, lambda: True
+        return super().get_source(environment, template)
 
 
 class ExcelError(Exception):
@@ -258,19 +297,34 @@ def build_devices(links, vpn_ids, devices):
 
         af = next((a for a in d["bgp_vrfs"] if a["vrf"] == vrf), None)
         if af is None:
-            af = {"vrf": vrf, "neighbors": []}
+            af = {"vrf": vrf, "vpn_id": vpn_ids[vrf], "neighbors": []}
             d["bgp_vrfs"].append(af)
         af["neighbors"].append({
             "ip": str(ip_b),
             "remote_as": devices[peer]["as"],
             "device_b": peer,
+            "description": f"{peer}-(vrf {vrf})",   # your naming standard
         })
     return data, errors
 
 
 def main():
-    xlsx = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "netgen_input.xlsx"
-    outdir = Path(sys.argv[2]) if len(sys.argv) > 2 else HERE / "output"
+    ap = argparse.ArgumentParser(description="Excel -> device configs")
+    ap.add_argument("xlsx", nargs="?", default=str(HERE / "netgen_input.xlsx"))
+    ap.add_argument("outdir", nargs="?", default=str(HERE / "output"))
+    ap.add_argument("--templates", help="template folder containing main.j2 "
+                    "(default: templates/<os>/ next to this script)")
+    ap.add_argument("--strict", action="store_true",
+                    help="with --templates: stop on a value the Excel doesn't provide "
+                         "instead of leaving it out")
+    args = ap.parse_args()
+    xlsx, outdir = Path(args.xlsx), Path(args.outdir)
+    if not xlsx.exists():
+        print(f"Excel file not found: {xlsx.resolve()}")
+        sys.exit(1)
+
+    def template_dir(os_name):
+        return Path(args.templates).resolve() if args.templates else HERE / "templates" / os_name
 
     wb = load_workbook(xlsx, data_only=True)
     try:
@@ -302,11 +356,12 @@ def main():
 
     problems, outputs = [], {}
     for job in jobs:
-        tpl_dir = HERE / "templates" / job["os"]
+        tpl_dir = template_dir(job["os"])
         if job["host"] not in data:
             problems.append(f"{job['host']}: no rows with this DEVICE A in the Links sheet")
         elif not (tpl_dir / "main.j2").exists():
-            problems.append(f"{job['host']}: no templates for {job['os']} yet "
+            what = f"in {tpl_dir}" if args.templates else f"for {job['os']}"
+            problems.append(f"{job['host']}: no main.j2 {what} "
                             f"(expected {tpl_dir / 'main.j2'})")
         if job["output"] in outputs:
             problems.append(f"{job['host']}: output name '{job['output']}' already used "
@@ -320,22 +375,60 @@ def main():
         print("No device has Generate = yes in the Generate sheet.")
         sys.exit(1)
 
-    envs = {}
-    outdir.mkdir(exist_ok=True)
+    lenient = bool(args.templates) and not args.strict
+    if lenient:
+        # lists split by structure in a draft (bgp_vrfs_2, subinterfaces_2...) can't
+        # be filled from Excel: all rows go to the first list, with its structure
+        tpl_dir = template_dir("")
+        variants = sorted({m for f in tpl_dir.glob("*.j2")
+                           for m in re.findall(r"{%-?\s*for\s+\w+\s+in\s+(?:\w+\.)?(\w+_\d+)\b",
+                                               f.read_text(errors="replace"))})
+        if variants:
+            print(f"warning: these loops are variants and stay empty: {', '.join(variants)}")
+            print("  Excel rows are rendered with the structure of the first loop "
+                  "(e.g. bgp_vrfs, not bgp_vrfs_2).")
+            print("  Check the result, or merge the variants in the draft.")
+
+    failed = False
+    outdir.mkdir(parents=True, exist_ok=True)
     for job in jobs:
-        if job["os"] not in envs:
-            envs[job["os"]] = Environment(
-                loader=FileSystemLoader(HERE / "templates" / job["os"]), trim_blocks=True,
-                keep_trailing_newline=True, undefined=StrictUndefined)
+        tpl_dir = template_dir(job["os"])
+        disabled = [b for b, on in job["blocks"].items() if not on]
+        env = Environment(loader=BlockLoader(tpl_dir, disabled), trim_blocks=True,
+                          keep_trailing_newline=True,
+                          undefined=SkipUndefined if lenient else StrictUndefined)
         d = data[job["host"]]
+        SkipUndefined.seen = set()
+        try:
+            text = env.get_template("main.j2").render(blocks=job["blocks"], **d)
+            if lenient:
+                text = "\n".join(l for l in text.split("\n") if SKIP not in l)
+        except UndefinedError as e:
+            print(f"{job['host']}: the templates in {tpl_dir} use a variable the Excel "
+                  f"data doesn't provide: {e}")
+            print("  Available: local_as, router_id (if filled), blocks.vrf/interfaces/bgp,")
+            print("    vrfs[].name/vpn_id, subinterfaces[].name/dot1q/vrf/ip/mask,")
+            print("    bgp_vrfs[].vrf/vpn_id, bgp_vrfs[].neighbors[].ip/remote_as/device_b/description")
+            print("  Run without --strict to leave out what the Excel doesn't provide.")
+            failed = True
+            continue
+        except TemplateError as e:
+            print(f"{job['host']}: template error in {tpl_dir}: {e}")
+            failed = True
+            continue
         path = outdir / f"{job['output']}.cfg"
-        path.write_text(envs[job["os"]].get_template("main.j2").render(blocks=job["blocks"], **d))
+        path.write_text(text)
         parts = [b for b, on in job["blocks"].items() if on]
-        print(f"written {path}  [{job['os']}: {', '.join(parts)}]")
+        src = tpl_dir if args.templates else job["os"]
+        print(f"written {path}  [{src}: {', '.join(parts)}]")
+        if lenient and SkipUndefined.seen:
+            print(f"  left out (not in Excel): {', '.join(sorted(SkipUndefined.seen))}")
 
     skipped = [h for h in data if h not in {j["host"] for j in jobs}]
     if skipped:
         print(f"not generated (not selected in Generate sheet): {', '.join(skipped)}")
+    if failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

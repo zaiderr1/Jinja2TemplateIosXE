@@ -120,7 +120,15 @@ def read_sheet(wb, name, spec, required):
     ws = next((wb[s] for s in wb.sheetnames if norm(s) == norm(name)), None)
     if ws is None:
         raise ExcelError(f"sheet '{name}' not found (sheets: {', '.join(wb.sheetnames)})")
-    rows = list(ws.iter_rows(values_only=True))
+    rows = [list(r) for r in ws.iter_rows(min_row=1, min_col=1, values_only=True)]
+    # Merged cells: Excel keeps the value only in the top-left cell of the block.
+    # Copy it to every cell of the block (e.g. a Port merged over several links).
+    for rng in ws.merged_cells.ranges:
+        value = ws.cell(rng.min_row, rng.min_col).value
+        for r in range(rng.min_row, min(rng.max_row, len(rows)) + 1):
+            for c in range(rng.min_col, rng.max_col + 1):
+                if c <= len(rows[r - 1]):
+                    rows[r - 1][c - 1] = value
     best, best_found, header_error = None, -1, None
     for i, raw in enumerate(rows[:10]):
         try:
@@ -141,10 +149,11 @@ def read_sheet(wb, name, spec, required):
         raise ExcelError(f"sheet '{ws.title}': column(s) not found: {', '.join(missing)}. "
                          f"Headers seen: {[c for c in rows[header_row] if c]}")
     out = []
-    for raw in rows[header_row + 1:]:
+    for excel_row, raw in enumerate(rows[header_row + 1:], start=header_row + 2):
         if raw is None or all(v in (None, "") for v in raw):
             continue
         row = {key: "" for key in spec}
+        row["_row"] = excel_row               # real Excel row number, for messages
         row.update({key: cell_text(raw[col]) for col, key in mapping.items() if col < len(raw)})
         out.append(row)
     return out
@@ -171,8 +180,8 @@ def read_generate(wb, link_hosts):
         return [{"host": h, "os": "ios-xe", "blocks": everything, "output": h}
                 for h in link_hosts], "Generate sheet is empty: generating every device."
     jobs, seen = [], set()
-    for n, r in enumerate(rows, start=2):
-        where = f"Generate row {n} ({r['Device']})"
+    for r in rows:
+        where = f"Generate row {r['_row']} ({r['Device']})"
         if not r["Device"]:
             continue
         if r["Device"] in seen:
@@ -195,10 +204,14 @@ def build_devices(links, vpn_ids, devices):
     """Excel rows -> one data structure per DEVICE A. Returns (data, errors)."""
     errors, data = [], {}
     used_subifs = set()
-    for n, r in enumerate(links, start=2):
-        where = f"Links row {n}"
+    for r in links:
+        where = f"Links row {r['_row']}"
         before = len(errors)
         host, peer, vrf = r["DEVICE A"], r["Device B"], r["VRF"]
+        empty = [k.replace("_", " ") for k in LINKS_REQUIRED if not r[k]]
+        if empty:
+            errors.append(f"{where}: empty cell(s): {', '.join(empty)}")
+            continue
         try:
             net = ipaddress.ip_network(r["Subnet"], strict=True)
             ip_a = ipaddress.ip_address(r["IP_A"])

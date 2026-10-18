@@ -1,0 +1,8 @@
+{% for v in vrfs %}
+vrf definition {{ v.name }}
+ rd {{ local_as }}:{{ v.vpn_id }}
+ !
+ address-family ipv4
+ exit-address-family
+!
+{% endfor %}

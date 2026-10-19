@@ -1,0 +1,19 @@
+{#
+  interfaces.j2 - one sub-interface per link of the device.
+  subinterfaces: [{name, description, dot1q, vrf, ip, mask}]
+    name         physical port (Port A or Port B column)
+    dot1q        used for BOTH the sub-interface number and the encapsulation
+    description  # <remote host> - <remote port>.<dot1q> - ( <VRF> ) #
+                 empty when the remote port is unknown -> no description line
+    mask         computed from the Subnet column (/31 -> 255.255.255.254)
+#}
+{% for i in subinterfaces %}
+interface {{ i.name }}.{{ i.dot1q }}
+{% if i.description %}
+ description {{ i.description }}
+{% endif %}
+ encapsulation dot1Q {{ i.dot1q }}
+ vrf forwarding {{ i.vrf }}
+ ip address {{ i.ip }} {{ i.mask }}
+!
+{% endfor %}

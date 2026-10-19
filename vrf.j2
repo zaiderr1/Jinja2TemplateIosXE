@@ -1,0 +1,14 @@
+{#
+  vrf.j2 - one VRF definition per VRF used by the device.
+  vrfs:      [{name, vpn_id}]   (VPN ID from the VRFs sheet)
+  local_as:  BGP AS of this device (Devices sheet)
+  RD standard: <local AS>:<VPN ID>
+#}
+{% for v in vrfs %}
+vrf definition {{ v.name }}
+ rd {{ local_as }}:{{ v.vpn_id }}
+ !
+ address-family ipv4
+ exit-address-family
+!
+{% endfor %}

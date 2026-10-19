@@ -1,0 +1,16 @@
+{#
+  main.j2 - entry point, rendered once per device by generate.py.
+  Includes each block in config order. blocks.* comes from the
+  VRF / Interfaces / BGP columns of the Generate sheet (empty = yes).
+  Comment blocks like this one never appear in the output.
+#}
+{% if blocks.vrf %}
+{% include 'vrf.j2' %}
+{% endif %}
+{% if blocks.interfaces %}
+{% include 'interfaces.j2' %}
+{% endif %}
+{% if blocks.bgp %}
+{% include 'bgp.j2' %}
+{% endif %}
+end

@@ -1,14 +1,13 @@
 router bgp {{ local_as }}
-{% if router_id is defined %}
  bgp router-id {{ router_id }}
-{% endif %}
+ bgp log-neighbor-changes
 {% for af in bgp_vrfs %}
  !
  address-family ipv4 vrf {{ af.vrf }}
   redistribute connected
 {% for n in af.neighbors %}
   neighbor {{ n.ip }} remote-as {{ n.remote_as }}
-  neighbor {{ n.ip }} description {{ n.device_b }}-(vrf {{ af.vrf }})
+  neighbor {{ n.ip }} description {{ n.description }}
   neighbor {{ n.ip }} activate
   neighbor {{ n.ip }} route-map RP-BGP{{ local_as }}OutBgp{{ n.remote_as }}-{{ af.vrf }} out
   neighbor {{ n.ip }} route-map RP-BGP{{ n.remote_as }}InBgp{{ local_as }}-{{ af.vrf }} in

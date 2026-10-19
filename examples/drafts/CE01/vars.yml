@@ -1,0 +1,45 @@
+# Variables extracted from running-config-CE01.txt
+
+local_as:  "65001"   # router bgp 65001
+router_id: "203.0.113.1"   # bgp router-id 203.0.113.1
+
+vrfs:
+  - name: "internet"
+    vpn_id: "200"
+  - name: "underlay"
+    vpn_id: "100"
+
+loopbacks:
+  - mask: "255.255.255.255"
+
+interfaces:
+  - name: "TwentyFiveGigE1/0/1"
+    description: "UPLINK-PE01"
+  - name: "TwentyFiveGigE1/0/2"
+    description: "UPLINK-PE02"
+
+subinterfaces:
+  - name: "TwentyFiveGigE1/0/1"
+    dot1q: "100"
+    description: "# PE01 - GigabitEthernet0/0/1.100 - ( underlay ) #"
+    vrf: "underlay"
+    ip: "192.0.2.0"
+    mask: "255.255.255.254"
+  - name: "TwentyFiveGigE1/0/2"
+    dot1q: "200"
+    description: "# PE02 - GigabitEthernet0/0/1.200 - ( internet ) #"
+    vrf: "internet"
+    ip: "198.51.100.0"
+    mask: "255.255.255.254"
+
+bgp_vrfs:
+  - vrf: "internet"
+    neighbors:
+      - ip: "198.51.100.1"
+        remote_as: "65100"
+        description: "PE02-(vrf internet)"
+  - vrf: "underlay"
+    neighbors:
+      - ip: "192.0.2.1"
+        remote_as: "65100"
+        description: "PE01-(vrf underlay)"

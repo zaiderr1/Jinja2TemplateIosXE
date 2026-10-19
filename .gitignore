@@ -1,0 +1,18 @@
+# Generated files and working folders contain network data:
+# keep them out of the repository. Only the fictional examples are tracked.
+/output/
+/drafts/
+*.cfg
+*_vars.yml
+vars.yml
+!/examples/**/*.cfg
+!/examples/**/vars.yml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Excel lock files
+~$*.xlsx

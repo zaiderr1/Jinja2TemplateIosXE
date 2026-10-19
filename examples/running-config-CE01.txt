@@ -1,0 +1,81 @@
+Building configuration...
+
+Current configuration : 2048 bytes
+!
+! Fictional example - documentation addresses (RFC 5737) and private AS numbers
+!
+version 17.9
+service timestamps debug datetime msec
+service password-encryption
+!
+hostname CE01
+!
+vrf definition internet
+ rd 65001:200
+ !
+ address-family ipv4
+ exit-address-family
+!
+vrf definition underlay
+ rd 65001:100
+ !
+ address-family ipv4
+ exit-address-family
+!
+interface Loopback0
+ ip address 203.0.113.1 255.255.255.255
+!
+interface TwentyFiveGigE1/0/1
+ description UPLINK-PE01
+ no ip address
+!
+interface TwentyFiveGigE1/0/1.100
+ description # PE01 - GigabitEthernet0/0/1.100 - ( underlay ) #
+ encapsulation dot1Q 100
+ vrf forwarding underlay
+ ip address 192.0.2.0 255.255.255.254
+!
+interface TwentyFiveGigE1/0/2
+ description UPLINK-PE02
+ no ip address
+!
+interface TwentyFiveGigE1/0/2.200
+ description # PE02 - GigabitEthernet0/0/1.200 - ( internet ) #
+ encapsulation dot1Q 200
+ vrf forwarding internet
+ ip address 198.51.100.0 255.255.255.254
+ ip access-group ACL-IN in
+!
+router bgp 65001
+ bgp router-id 203.0.113.1
+ bgp log-neighbor-changes
+ !
+ address-family ipv4 vrf internet
+  redistribute connected
+  neighbor 198.51.100.1 remote-as 65100
+  neighbor 198.51.100.1 description PE02-(vrf internet)
+  neighbor 198.51.100.1 activate
+  neighbor 198.51.100.1 route-map RP-BGP65001OutBgp65100-internet out
+  neighbor 198.51.100.1 route-map RP-BGP65100InBgp65001-internet in
+ exit-address-family
+ !
+ address-family ipv4 vrf underlay
+  redistribute connected
+  neighbor 192.0.2.1 remote-as 65100
+  neighbor 192.0.2.1 description PE01-(vrf underlay)
+  neighbor 192.0.2.1 activate
+  neighbor 192.0.2.1 route-map RP-BGP65001OutBgp65100-underlay out
+  neighbor 192.0.2.1 route-map RP-BGP65100InBgp65001-underlay in
+ exit-address-family
+!
+ip prefix-list PL-UNDERLAY seq 10 permit 192.0.2.0/24 le 32
+ip access-list extended ACL-IN
+ permit tcp any host 198.51.100.0 eq 22
+!
+route-map RP-BGP65001OutBgp65100-underlay permit 10
+ match ip address prefix-list PL-UNDERLAY
+!
+line vty 0 4
+ transport input ssh
+!
+end

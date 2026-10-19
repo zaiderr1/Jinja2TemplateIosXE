@@ -1,7 +1,0 @@
-{% for i in subinterfaces %}
-interface {{ i.name }}.{{ i.dot1q }}
- encapsulation dot1Q {{ i.dot1q }}
- vrf forwarding {{ i.vrf }}
- ip address {{ i.ip }} {{ i.mask }}
-!
-{% endfor %}

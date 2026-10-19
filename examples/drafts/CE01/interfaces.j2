@@ -1,0 +1,19 @@
+{% for i in loopbacks %}
+interface Loopback0
+ ip address {{ router_id }} {{ i.mask }}
+!
+{% endfor %}
+{% for i in interfaces %}
+interface {{ i.name }}
+ description {{ i.description }}
+ no ip address
+!
+{% endfor %}
+{% for i in subinterfaces %}
+interface {{ i.name }}.{{ i.dot1q }}
+ description {{ i.description }}
+ encapsulation dot1Q {{ i.dot1q }}
+ vrf forwarding {{ i.vrf }}
+ ip address {{ i.ip }} {{ i.mask }}
+!
+{% endfor %}

@@ -246,7 +246,7 @@ class Vars:
                 elif pool == "intf":
                     pre, post = r"(?<![\w/.])", r"(?![\w/])"
                 elif pool == "asn" and len(value) >= 4:
-                    pre, post = r"(?<![\d.])", r"(?![\d.])"   # also RP-BGP64681Out...
+                    pre, post = r"(?<![\d.])", r"(?![\d.])"   # also RP-BGP65001Out...
                 else:
                     continue
                 words.append((re.compile(pre + re.escape(value) + post), name))

@@ -61,7 +61,7 @@ the block had the value.
 
 Data given to the templates (one per device)
 --------------------------------------------
-    local_as        "64681"
+    local_as        "65001"
     router_id       "10.255.0.1"            only if filled in the Devices sheet
     blocks          {"vrf": True, "interfaces": True, "bgp": True}
     vrfs            [{name, vpn_id}]
@@ -285,7 +285,7 @@ def read_sheet(wb, name, spec, required):
     Every returned row has all keys of spec (empty string when the column is
     absent or the cell is empty) plus "_row", the real Excel row number used
     in error messages. Fully empty rows are skipped.
-    Example: {"VRF": "sdwan_underlay", "DOT1Q": "2025", ..., "_row": 2}
+    Example: {"VRF": "underlay", "DOT1Q": "100", ..., "_row": 2}
 
     Raises ExcelError when the sheet or a required column can't be found.
     """
@@ -411,8 +411,8 @@ def build_devices(links, vpn_ids, devices):
     """Check every link row and build the template data of each device.
 
     links:   rows of the Links sheet (from read_sheet)
-    vpn_ids: {"sdwan_underlay": "234", ...}                  from the VRFs sheet
-    devices: {"CE01": {"as": "64681", "router_id": ""}, ...} from the Devices sheet
+    vpn_ids: {"underlay": "100", ...}                        from the VRFs sheet
+    devices: {"CE01": {"as": "65001", "router_id": ""}, ...} from the Devices sheet
 
     Each valid row is added twice, once for each end of the link (see add_side).
     Returns (data, errors, incomplete, no_desc):

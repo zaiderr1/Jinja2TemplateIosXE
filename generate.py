@@ -47,6 +47,9 @@ the block had the value.
             Device B column on its left; "Port A", "IP B"... work anywhere.
             Port B may stay empty when Device B is not generated.
             Required: VRF, Subnet, DOT1Q, DEVICE A, Port A, IP A, Device B, IP B.
+            An empty VRF cell (or GRT / global) means the global routing table:
+            no VRF definition, no "vrf forwarding", BGP neighbor in the global
+            address-family. GRT links need no row in the VRFs sheet.
 
   VRFs      VRF | VPN ID                 rd <local AS>:<VPN ID>
 
@@ -55,19 +58,21 @@ the block had the value.
 
   Generate  Device | Generate | OS | VRF | Interfaces | BGP | Output name   (optional)
             Which devices to produce and how. yes/no columns: empty = yes.
-            OS selects templates/<os>/ (only ios-xe exists for now).
+            OS selects templates/<os>/: ios-xe or ios-xr (empty = ios-xe).
             Output name: file name without .cfg (empty = hostname).
             Missing or empty sheet: every device, ios-xe, all blocks.
 
 Data given to the templates (one per device)
 --------------------------------------------
-    local_as        "65001"
+    local_as        "64681"
     router_id       "10.255.0.1"            only if filled in the Devices sheet
     blocks          {"vrf": True, "interfaces": True, "bgp": True}
     vrfs            [{name, vpn_id}]
     subinterfaces   [{name, description, dot1q, vrf, ip, mask}]
                       description = # <remote host> - <remote port>.<dot1q> - ( <VRF> ) #
     bgp_vrfs        [{vrf, vpn_id, neighbors: [{ip, remote_as, device_b, description}]}]
+    bgp_global      [{ip, remote_as, device_b, description}]   neighbors of GRT links
+    grt_label       "GRT": name of the global table in descriptions and policy names
                       device_b = the device at the other end of the link
                       description = <remote host>-(vrf <VRF>)
 
@@ -117,6 +122,16 @@ LINKS_COLS = {
     "IP_B": {"ip b", "ipb", "b ip"},
 }
 LINKS_REQUIRED = ["VRF", "Subnet", "DOT1Q", "DEVICE A", "Device B", "Port_A", "IP_A", "IP_B"]
+# Cells that must be filled on every Links row. VRF is not one of them:
+# an empty VRF cell means the global routing table (GRT), see GRT_VALUES.
+LINKS_NOT_EMPTY = [k for k in LINKS_REQUIRED if k != "VRF"]
+
+# VRF cell values that mean "no VRF, global routing table" (normalized, see norm()).
+GRT_VALUES = {"", "grt", "global"}
+# Name used for the GRT in descriptions and route-map / route-policy names:
+#   interface: # PE01 - Gi0/0/1.100 - ( GRT ) #     neighbor: PE01-(GRT)
+#   policies:  RP-BGP65001OutBgp65100-GRT / RP-BGP65100InBgp65001-GRT
+GRT_LABEL = "GRT"
 
 # Headers without a side ("Port", "IP"): they get the side (A or B) of the last
 # DEVICE A / Device B column seen on their left. "Port" -> "Port_A" or "Port_B".
@@ -285,7 +300,7 @@ def read_sheet(wb, name, spec, required):
     Every returned row has all keys of spec (empty string when the column is
     absent or the cell is empty) plus "_row", the real Excel row number used
     in error messages. Fully empty rows are skipped.
-    Example: {"VRF": "underlay", "DOT1Q": "100", ..., "_row": 2}
+    Example: {"VRF": "sdwan_underlay", "DOT1Q": "2025", ..., "_row": 2}
 
     Raises ExcelError when the sheet or a required column can't be found.
     """
@@ -411,8 +426,8 @@ def build_devices(links, vpn_ids, devices):
     """Check every link row and build the template data of each device.
 
     links:   rows of the Links sheet (from read_sheet)
-    vpn_ids: {"underlay": "100", ...}                        from the VRFs sheet
-    devices: {"CE01": {"as": "65001", "router_id": ""}, ...} from the Devices sheet
+    vpn_ids: {"sdwan_underlay": "234", ...}                  from the VRFs sheet
+    devices: {"CE01": {"as": "64681", "router_id": ""}, ...} from the Devices sheet
 
     Each valid row is added twice, once for each end of the link (see add_side).
     Returns (data, errors, incomplete, no_desc):
@@ -446,13 +461,15 @@ def build_devices(links, vpn_ids, devices):
         # The device's data, created the first time the device is seen
         d = data.setdefault(host, {
             "local_as": devices[host]["as"],
-            "vrfs": [], "subinterfaces": [], "bgp_vrfs": [],
+            "vrfs": [], "subinterfaces": [], "bgp_vrfs": [], "bgp_global": [],
+            "grt_label": GRT_LABEL,
         })
         if devices[host]["router_id"]:
             d["router_id"] = devices[host]["router_id"]
 
-        # VRF definition: once per VRF on this device
-        if not any(v["name"] == vrf for v in d["vrfs"]):
+        # VRF definition: once per VRF on this device (none for the GRT: vrf == "")
+        label = vrf or GRT_LABEL
+        if vrf and not any(v["name"] == vrf for v in d["vrfs"]):
             d["vrfs"].append({"name": vrf, "vpn_id": vpn_ids[vrf]})
 
         # Sub-interface: one per link
@@ -460,33 +477,41 @@ def build_devices(links, vpn_ids, devices):
             "name": port,
             # Standard: # <remote host> - <remote sub-interface> - ( <VRF> ) #
             # Empty (no description line) when the remote port is unknown.
-            "description": (f"# {peer} - {peer_port}.{dot1q} - ( {vrf} ) #"
+            "description": (f"# {peer} - {peer_port}.{dot1q} - ( {label} ) #"
                             if peer_port else ""),
             "dot1q": dot1q,          # same value for <port>.<dot1q> and encapsulation
-            "vrf": vrf,
+            "vrf": vrf,              # "" = GRT: no vrf forwarding line
             "ip": str(ip_local),
             "mask": str(net.netmask),
         })
 
-        # BGP: one address-family per VRF, one neighbor per link
+        # BGP: one neighbor per link, in its VRF's address-family, or in the
+        # global table (bgp_global) for a GRT link
+        neighbor = {
+            "ip": str(ip_peer),
+            "remote_as": devices[peer]["as"],
+            "device_b": peer,                        # the device at the other end
+            # standard neighbor description
+            "description": f"{peer}-(vrf {vrf})" if vrf else f"{peer}-({GRT_LABEL})",
+        }
+        if not vrf:
+            d["bgp_global"].append(neighbor)
+            return
         af = next((a for a in d["bgp_vrfs"] if a["vrf"] == vrf), None)
         if af is None:
             af = {"vrf": vrf, "vpn_id": vpn_ids[vrf], "neighbors": []}
             d["bgp_vrfs"].append(af)
-        af["neighbors"].append({
-            "ip": str(ip_peer),
-            "remote_as": devices[peer]["as"],
-            "device_b": peer,                        # the device at the other end
-            "description": f"{peer}-(vrf {vrf})",    # standard neighbor description
-        })
+        af["neighbors"].append(neighbor)
 
     for r in links:
         where = f"Links row {r['_row']}"
         before = len(errors)          # to know if this row added errors
         host_a, host_b, vrf, dot1q = r["DEVICE A"], r["Device B"], r["VRF"], r["DOT1Q"]
+        if norm(vrf) in GRT_VALUES:
+            vrf = ""                  # GRT: no VRF
 
         # --- checks: every problem is collected, so you see them all at once ---
-        empty = [k.replace("_", " ") for k in LINKS_REQUIRED if not r[k]]
+        empty = [k.replace("_", " ") for k in LINKS_NOT_EMPTY if not r[k]]
         if empty:
             errors.append(f"{where}: empty cell(s): {', '.join(empty)}")
             continue
@@ -507,7 +532,7 @@ def build_devices(links, vpn_ids, devices):
         for dev in (host_a, host_b):
             if dev not in devices:
                 errors.append(f"{where}: device '{dev}' missing in Devices sheet")
-        if vrf not in vpn_ids:
+        if vrf and vrf not in vpn_ids:
             errors.append(f"{where}: VRF '{vrf}' missing in VRFs sheet")
         if not dot1q.isdigit() or not 1 <= int(dot1q) <= 4094:
             errors.append(f"{where}: DOT1Q '{dot1q}' must be 1-4094")
@@ -686,7 +711,8 @@ def generate_configs(wb, templates=None, strict=False):
                 f"data doesn't provide: {e}",
                 "  Available: local_as, router_id (if filled), blocks.vrf/interfaces/bgp,",
                 "    vrfs[].name/vpn_id, subinterfaces[].name/dot1q/vrf/ip/mask/description,",
-                "    bgp_vrfs[].vrf/vpn_id, bgp_vrfs[].neighbors[].ip/remote_as/device_b/description",
+                "    bgp_vrfs[].vrf/vpn_id, bgp_vrfs[].neighbors[].ip/remote_as/device_b/description,",
+                "    bgp_global[].ip/remote_as/device_b/description, grt_label",
                 "  Run without --strict to leave out what the Excel doesn't provide."]})
             continue
         except TemplateError as e:

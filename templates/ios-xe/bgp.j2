@@ -3,6 +3,11 @@
   local_as   BGP AS of this device
   router_id  optional (Router ID column of the Devices sheet)
   bgp_vrfs:  [{vrf, vpn_id, neighbors: [{ip, remote_as, device_b, description}]}]
+  bgp_global: [{ip, remote_as, device_b, description}]  neighbors of GRT links
+              (empty VRF cell): global "address-family ipv4", policies named
+              with grt_label ("GRT"). No "redistribute connected" in the global
+              table: it would announce every connected network to every
+              global BGP peer, route reflectors included.
     ip         IP of the other end of the link
     remote_as  BGP AS of the other end
     device_b   hostname of the other end (on either side of the link)
@@ -14,6 +19,20 @@
 router bgp {{ local_as }}
 {% if router_id is defined %}
  bgp router-id {{ router_id }}
+{% endif %}
+{% for n in bgp_global %}
+ neighbor {{ n.ip }} remote-as {{ n.remote_as }}
+ neighbor {{ n.ip }} description {{ n.description }}
+{% endfor %}
+{% if bgp_global %}
+ !
+ address-family ipv4
+{% for n in bgp_global %}
+  neighbor {{ n.ip }} activate
+  neighbor {{ n.ip }} route-map RP-BGP{{ local_as }}OutBgp{{ n.remote_as }}-{{ grt_label }} out
+  neighbor {{ n.ip }} route-map RP-BGP{{ n.remote_as }}InBgp{{ local_as }}-{{ grt_label }} in
+{% endfor %}
+ exit-address-family
 {% endif %}
 {% for af in bgp_vrfs %}
  !

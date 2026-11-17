@@ -22,6 +22,8 @@ Both run locally, need no server, and only use `openpyxl` and `jinja2`.
 ## Contents
 
 - [Installation](#installation)
+- [Graphical interface](#graphical-interface)
+- [DNS names](#dns-names)
 - [Generate configurations from Excel](#generate-configurations-from-excel)
 - [The Excel workbook](#the-excel-workbook)
 - [IOS-XR](#ios-xr)
@@ -36,11 +38,63 @@ Both run locally, need no server, and only use `openpyxl` and `jinja2`.
 
 Python 3.8 or later.
 
+The approved runtime is Python with Tkinter (included with the Windows Python
+installer), `openpyxl` and `jinja2` as listed in `requirements.txt`. No other
+package, service, or build step is used.
+
+## Graphical interface
+
+On Windows, double-click `netgen_gui.pyw`; alternatively run `python
+netgen_gui.py` from the project folder. The window has **Config generator** and
+**DNS names** tabs. In Config generator, choose an `.xlsx` or `.xlsm` workbook
+and optionally a template folder. An empty folder field uses the standard
+IOS-XE/IOS-XR templates selected by the workbook's Generate sheet. **Stop on
+values missing from Excel** applies only with a custom template folder. Click
+**Generate** (or Ctrl+Enter); the workbook is reread on each run. Blocking
+workbook errors are shown without configurations. Otherwise the results show
+generated, failed, and skipped devices, notes, and any values left out. Select
+a device to preview its configuration, then use **Copy**, **Save .cfg...**, or
+**Save all...**. Save all lists existing files and asks before replacing them.
+
+## DNS names
+
+In **DNS names**, add running-config files, add a folder of text files, or paste
+one config. Files without a hostname are reported and skipped. Set the domain
+(default `win.net.intra`), choose whether to include secondary addresses,
+exclude shutdown interfaces, or lowercase names, and edit the interface
+abbreviation table with **Abbreviations...**. Generate names to preview the
+sortable FQDN, IPv4, device, interface, dot1q, VRF, and status columns.
+Warnings include shutdown, secondary, duplicate name/IP, name too long, dot1q
+mismatch, and unknown interface type. **Export CSV...** writes UTF-8 with BOM;
+**Export PowerShell...** writes `Add-DnsServerResourceRecordA` commands for
+clean records and commented commands for warnings; **Copy table** copies TSV.
+Exports happen only after choosing a destination. The standalone DNS command
+is:
+
 ```
-git clone https://github.com/zaiderr1/Jinja2TemplateIosXE.git
-cd Jinja2TemplateIosXE
-pip install -r requirements.txt
+python dns_names.py <files...> --domain win.net.intra --csv out.csv
 ```
+
+Both tools work offline. Workbook and running-config contents are kept in
+memory; only explicit Save/Export actions write output files. The adjacent
+`netgen_gui_settings.json` stores window size, last-used folders, strict mode,
+DNS options, domain, and abbreviations. It does not store workbook/config
+contents, hostnames, IP addresses, or loaded-file history. The test command is:
+
+```
+python -m unittest discover -s tests -t .
+```
+
+## Browser interface (netgen.html)
+
+`netgen.html` does the same two jobs as the Tkinter window (Config generator and DNS names) in your web browser. It is a single file: double-click it, Edge or Chrome opens it. Nothing to install, no Python needed, no server, no network: a security rule inside the page blocks every network request, and nothing is saved unless you click Save or Export.
+
+- **Config generator**: Browse… (or drop) the Excel file, then Generate. The file is read again at every Generate (Ctrl+Enter), so you can edit it in Excel and regenerate. Template folder: optional, pick a draft folder made by `conf2jinja.py`. Save .cfg… opens a save dialog; Save all… writes every config into a folder you choose (and asks before overwriting), or downloads a `configs.zip` if the browser can't write to a folder.
+- **DNS names**: same rules, options and exports as `dns_names.py` (CSV with BOM, PowerShell, Copy table). The options and the abbreviation table are remembered in the browser (they never contain configurations, IPs or hostnames).
+
+The page carries its own copy of `templates/`. **After changing a template, run `python build_html.py`** to copy it into `netgen.html` (`tests/test_html.py` fails until you do). The page reproduces `generate.py` and `dns_names.py` in JavaScript: when you change a rule in one of them, the same change must be made in the engine part of `netgen.html` (each function names the Python function it copies).
+
+Limits: Excel cells formatted as dates are read as numbers; drafts may use the template features of `conf2jinja.py` and the standard templates (if/for/include/raw, filters default, upper, lower, join, length…), not every Jinja2 feature.
 
 ## Generate configurations from Excel
 

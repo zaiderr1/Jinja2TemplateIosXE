@@ -1,0 +1,2230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Offline only: this policy forbids every network request (no URL, no font, no telemetry). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network Config Tools</title>
+<style>
+/* ---- Tokens ------------------------------------------------------------------ */
+:root {
+  --ink: #0f2338;        /* text, header */
+  --paper: #eef2f6;      /* page background */
+  --panel: #ffffff;      /* work surfaces */
+  --line: #d3dbe4;       /* borders */
+  --muted: #5d6f82;      /* secondary text */
+  --cord: #0b7a8a;       /* accent: patch-cord teal */
+  --cord-ink: #ffffff;
+  --ok: #1f8a4c; --warn: #b26b00; --bad: #c0392b; --off: #8492a6;
+  --warn-bg: #fff5e0; --bad-bg: #fdecea;
+  --console: #132231; --console-ink: #dbe6f0; --console-dim: #5f7488; --console-bar: #1c3043;
+  --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: Consolas, "Cascadia Mono", "Courier New", monospace;
+  --r-s: 4px; --r-m: 8px;
+}
+:root[data-theme="dark"] {
+  --ink: #e2e9f0; --paper: #0d1823; --panel: #142333; --line: #27394c; --muted: #93a5b8;
+  --cord: #2bb3c0; --cord-ink: #06222a; --warn-bg: #3a2a0a; --bad-bg: #3d1714;
+  --console: #08121c; --console-bar: #0f1e2c;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { font: 14px/1.45 var(--ui); color: var(--ink); background: var(--paper); display: flex; flex-direction: column; min-width: 980px; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--cord); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ---- Header ------------------------------------------------------------------ */
+header { display: flex; align-items: center; gap: 24px; padding: 10px 20px; background: var(--ink); color: var(--paper); }
+:root[data-theme="dark"] header { background: #091521; color: var(--ink); }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; letter-spacing: .2px; }
+.brand svg { width: 26px; height: 26px; }
+.tabs { display: flex; gap: 2px; background: rgba(255,255,255,.08); border-radius: var(--r-m); padding: 3px; }
+.tabs button { border: 0; background: none; color: inherit; padding: 6px 16px; border-radius: 6px; cursor: pointer; opacity: .75; }
+.tabs button[aria-selected="true"] { background: var(--cord); color: var(--cord-ink); opacity: 1; font-weight: 600; }
+.offline { margin-left: auto; font-size: 12.5px; opacity: .8; display: flex; align-items: center; gap: 6px; }
+.offline::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #4cc38a; }
+.icon-btn { border: 1px solid rgba(255,255,255,.25); background: none; color: inherit; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+
+/* ---- Layout ------------------------------------------------------------------ */
+main { flex: 1; min-height: 0; padding: 14px 20px 10px; }
+.tab { display: none; height: 100%; gap: 14px; grid-template-columns: 340px 1fr; }
+.tab.active { display: grid; }
+.side { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; padding-right: 2px; }
+.work { display: flex; flex-direction: column; gap: 10px; min-height: 0; min-width: 0; }
+section.box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-m); padding: 12px 14px; }
+section.box h2 { font-size: 13.5px; font-weight: 600; margin: 0 0 8px; }
+.field { margin-bottom: 10px; }
+.field label, .lbl { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 3px; }
+.picker { display: flex; gap: 6px; }
+.path { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: var(--r-s); padding: 5px 8px; background: var(--paper); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.path.empty { color: var(--muted); font-style: italic; }
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: var(--r-s); padding: 5px 12px; cursor: pointer; white-space: nowrap; }
+.btn:hover:not(:disabled) { border-color: var(--cord); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.primary { background: var(--cord); color: var(--cord-ink); border-color: var(--cord); font-weight: 600; padding: 7px 16px; }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.btn.small { padding: 2px 8px; font-size: 12.5px; }
+.check { display: flex; align-items: center; gap: 7px; margin: 6px 0; font-size: 13.5px; }
+.check input { margin: 0; accent-color: var(--cord); }
+.check.disabled { opacity: .5; }
+.hint { font-size: 12.5px; color: var(--muted); margin: 6px 0 0; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.drop { border: 1.5px dashed var(--line); border-radius: var(--r-m); padding: 10px; text-align: center; color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+.drop.over { border-color: var(--cord); color: var(--cord); }
+input[type=text], textarea { width: 100%; border: 1px solid var(--line); border-radius: var(--r-s); padding: 5px 8px; background: var(--panel); }
+textarea { font-family: var(--mono); font-size: 12.5px; resize: vertical; }
+
+/* ---- Messages ---------------------------------------------------------------- */
+.msg { border-radius: var(--r-m); padding: 10px 14px; border-left: 4px solid; }
+.msg.bad { background: var(--bad-bg); border-color: var(--bad); }
+.msg.warn { background: var(--warn-bg); border-color: var(--warn); }
+.msg h3 { margin: 0 0 4px; font-size: 14px; }
+.msg ul { margin: 4px 0 0; padding-left: 18px; }
+.msg li { margin: 2px 0; }
+.summary { font-size: 15px; font-weight: 600; }
+.empty-state { margin: auto; text-align: center; color: var(--muted); max-width: 420px; }
+.empty-state strong { display: block; color: var(--ink); font-size: 16px; margin-bottom: 6px; }
+
+/* ---- Devices + console ------------------------------------------------------- */
+.split { flex: 1; min-height: 0; display: grid; grid-template-columns: 220px 1fr; gap: 12px; }
+.devices { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-m); overflow: auto; padding: 6px; }
+.dev { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; background: none; padding: 7px 8px; border-radius: 6px; cursor: pointer; }
+.dev:hover { background: var(--paper); }
+.dev[aria-selected="true"] { background: var(--paper); box-shadow: inset 3px 0 0 var(--cord); }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); } .dot.off { background: var(--off); }
+.dev .name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dev .os { font-size: 11.5px; color: var(--muted); }
+.dev-note { font-size: 12px; color: var(--muted); padding: 2px 8px 8px 25px; }
+
+.console { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--console); border-radius: var(--r-m); overflow: hidden; }
+.console-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--console-bar); color: var(--console-ink); }
+.prompt { font-family: var(--mono); font-size: 13.5px; }
+.prompt b { color: #7fd6df; font-weight: normal; }
+.console-bar .meta { font-size: 12px; color: #9fb3c6; }
+.console-bar .actions { margin-left: auto; display: flex; gap: 6px; }
+.console-bar .btn { background: transparent; color: var(--console-ink); border-color: #35506a; }
+.console-bar .btn:hover:not(:disabled) { border-color: #7fd6df; }
+.leftout { background: #3a2c0c; color: #ffd27a; padding: 6px 12px; font-size: 12.5px; }
+.cfg { flex: 1; overflow: auto; margin: 0; padding: 10px 0; color: var(--console-ink); font: 13px/1.5 var(--mono); counter-reset: ln; }
+.cfg > span { display: block; padding: 0 14px 0 0; white-space: pre; }
+.cfg > span::before { counter-increment: ln; content: counter(ln); display: inline-block; width: 44px; padding-right: 14px; text-align: right; color: var(--console-dim); user-select: none; }
+.cfg .bang { color: var(--console-dim); }
+.cfg .kw { color: #7fd6df; }
+.cfg.failed { color: #ffb4aa; }
+
+/* ---- DNS --------------------------------------------------------------------- */
+.files { list-style: none; margin: 8px 0 0; padding: 0; max-height: 190px; overflow: auto; }
+.files li { display: flex; align-items: center; gap: 8px; padding: 5px 4px; border-top: 1px solid var(--line); font-size: 13px; }
+.files li:first-child { border-top: 0; }
+.files .fn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.files .host { font-weight: 600; }
+.badge { font-size: 11px; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); }
+.badge.xr { border-color: var(--cord); color: var(--cord); }
+.badge.bad { border-color: var(--bad); color: var(--bad); }
+.x { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 0 4px; font-size: 15px; }
+.x:hover { color: var(--bad); }
+details.abbr summary { cursor: pointer; font-size: 13px; }
+.abbr table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.abbr td { padding: 2px 3px; }
+.abbr td input { padding: 3px 6px; font-size: 12.5px; }
+
+.table-wrap { flex: 1; min-height: 0; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-m); }
+table.records { width: 100%; border-collapse: collapse; font-size: 13px; }
+.records th { position: sticky; top: 0; background: var(--panel); text-align: left; font-weight: 600; padding: 8px 10px; border-bottom: 2px solid var(--line); cursor: pointer; white-space: nowrap; user-select: none; }
+.records th:hover { color: var(--cord); }
+.records th[aria-sort="ascending"]::after { content: " \25B2"; font-size: 10px; }
+.records th[aria-sort="descending"]::after { content: " \25BC"; font-size: 10px; }
+.records td { padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.records td.fqdn { font-family: var(--mono); font-size: 12.5px; }
+.records tr.norec td.fqdn { color: var(--muted); font-style: italic; font-family: var(--ui); }
+.status { font-size: 12px; padding: 1px 8px; border-radius: 10px; }
+.status.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.status.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+
+/* ---- Status bar -------------------------------------------------------------- */
+footer { display: flex; gap: 16px; align-items: center; padding: 5px 20px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); background: var(--panel); min-height: 28px; }
+footer #status.flash { color: var(--cord); font-weight: 600; }
+footer .right { margin-left: auto; }
+.busy { position: relative; color: transparent !important; }
+.busy::after { content: ""; position: absolute; inset: 0; margin: auto; width: 14px; height: 14px; border: 2px solid var(--cord-ink); border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+dialog { border: 1px solid var(--line); border-radius: var(--r-m); background: var(--panel); color: var(--ink); max-width: 520px; }
+dialog::backdrop { background: rgba(10,20,30,.45); }
+dialog pre { max-height: 200px; overflow: auto; background: var(--paper); padding: 8px; border-radius: var(--r-s); font: 12.5px var(--mono); }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="9" width="26" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><g fill="currentColor"><rect x="7" y="13" width="4" height="4" rx="1"/><rect x="14" y="13" width="4" height="4" rx="1"/><rect x="21" y="13" width="4" height="4" rx="1"/></g><path d="M9 23v5M16 23v5M23 23v5" stroke="#2bb3c0" stroke-width="2"/></svg>
+    <span data-t="appTitle"></span>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-btn-gen" aria-selected="true" aria-controls="tab-gen" data-t="tabGen"></button>
+    <button role="tab" id="tab-btn-dns" aria-selected="false" aria-controls="tab-dns" data-t="tabDns"></button>
+  </nav>
+  <span class="offline" data-t="offline"></span>
+  <button class="icon-btn" id="theme" data-t-title="themeTitle"></button>
+</header>
+
+<main>
+  <!-- ======================= Tab 1: Config generator ======================= -->
+  <div class="tab active" id="tab-gen" role="tabpanel">
+    <div class="side">
+      <section class="box">
+        <h2 data-t="inputs"></h2>
+        <div class="field">
+          <span class="lbl" data-t="excelFile"></span>
+          <div class="picker"><div class="path empty" id="xlsx-path"></div><button class="btn" id="xlsx-browse" data-t="browse"></button></div>
+          <input type="file" id="xlsx-input" accept=".xlsx,.xlsm" hidden>
+          <div class="drop" id="xlsx-drop" data-t="dropExcel"></div>
+        </div>
+        <div class="field">
+          <span class="lbl" data-t="tplFolder"></span>
+          <div class="picker"><div class="path empty" id="tpl-path"></div><button class="btn" id="tpl-browse" data-t="browse"></button><button class="btn" id="tpl-clear" data-t="clear" disabled></button></div>
+          <input type="file" id="tpl-input" webkitdirectory hidden>
+          <label class="check disabled" id="strict-wrap"><input type="checkbox" id="strict" disabled> <span data-t="strict"></span></label>
+        </div>
+        <button class="btn primary" id="gen-run" data-t="generate" disabled></button>
+        <p class="hint" data-t="genHint"></p>
+      </section>
+    </div>
+    <div class="work" id="gen-work">
+      <div class="empty-state" id="gen-empty"><strong data-t="genEmptyTitle"></strong><span data-t="genEmptyText"></span></div>
+    </div>
+  </div>
+
+  <!-- ======================= Tab 2: DNS names ============================== -->
+  <div class="tab" id="tab-dns" role="tabpanel">
+    <div class="side">
+      <section class="box">
+        <h2 data-t="sources"></h2>
+        <div class="row">
+          <button class="btn" id="dns-add-files" data-t="addFiles"></button>
+          <button class="btn" id="dns-add-folder" data-t="addFolder"></button>
+          <button class="btn" id="dns-clear" data-t="clearAll" disabled></button>
+        </div>
+        <input type="file" id="dns-files-input" multiple hidden>
+        <input type="file" id="dns-folder-input" webkitdirectory hidden>
+        <ul class="files" id="dns-files"></ul>
+        <div class="drop" id="dns-drop" data-t="dropConfigs"></div>
+        <div class="field" style="margin-top:10px">
+          <label for="dns-paste" data-t="pasteLabel"></label>
+          <textarea id="dns-paste" rows="4" spellcheck="false"></textarea>
+        </div>
+      </section>
+      <section class="box">
+        <h2 data-t="naming"></h2>
+        <div class="field"><label for="dns-domain" data-t="domain"></label><input type="text" id="dns-domain" spellcheck="false"></div>
+        <label class="check"><input type="checkbox" id="opt-secondary"> <span data-t="optSecondary"></span></label>
+        <label class="check"><input type="checkbox" id="opt-shutdown"> <span data-t="optShutdown"></span></label>
+        <label class="check"><input type="checkbox" id="opt-lower"> <span data-t="optLower"></span></label>
+        <details class="abbr" id="abbr">
+          <summary data-t="abbrTitle"></summary>
+          <table><tbody id="abbr-rows"></tbody></table>
+          <div class="row" style="margin-top:6px"><button class="btn small" id="abbr-add" data-t="abbrAdd"></button><button class="btn small" id="abbr-reset" data-t="abbrReset"></button></div>
+        </details>
+      </section>
+      <button class="btn primary" id="dns-run" data-t="dnsGenerate"></button>
+    </div>
+    <div class="work" id="dns-work">
+      <div class="empty-state" id="dns-empty"><strong data-t="dnsEmptyTitle"></strong><span data-t="dnsEmptyText"></span></div>
+    </div>
+  </div>
+</main>
+
+<footer><span id="status"></span><span class="right" data-t="footer"></span></footer>
+<dialog id="confirm"><p id="confirm-text"></p><pre id="confirm-list"></pre><div class="row" style="justify-content:flex-end"><button class="btn" value="no" id="confirm-no" data-t="cancel"></button><button class="btn primary" id="confirm-yes" data-t="overwrite"></button></div></dialog>
+
+<!-- Standard templates (copied from templates/ by build_html.py — do not edit by hand) -->
+<script type="application/json" id="std-templates">{
+ "ios-xe": {
+  "bgp.j2": "{#\n  bgp.j2 - BGP process, one address-family per VRF, one neighbor per link.\n  local_as   BGP AS of this device\n  router_id  optional (Router ID column of the Devices sheet)\n  bgp_vrfs:  [{vrf, vpn_id, neighbors: [{ip, remote_as, device_b, description}]}]\n  bgp_global: [{ip, remote_as, device_b, description}]  neighbors of GRT links\n              (empty VRF cell): global \"address-family ipv4\", policies named\n              with grt_label (\"GRT\"). No \"redistribute connected\" in the global\n              table: it would announce every connected network to every\n              global BGP peer, route reflectors included.\n    ip         IP of the other end of the link\n    remote_as  BGP AS of the other end\n    device_b   hostname of the other end (on either side of the link)\n  Route-map naming standard:\n    out: RP-BGP<local AS>OutBgp<remote AS>-<VRF>\n    in:  RP-BGP<remote AS>InBgp<local AS>-<VRF>\n  The route-maps themselves are not generated: they must exist on the device.\n#}\nrouter bgp {{ local_as }}\n{% if router_id is defined %}\n bgp router-id {{ router_id }}\n{% endif %}\n{% for n in bgp_global %}\n neighbor {{ n.ip }} remote-as {{ n.remote_as }}\n neighbor {{ n.ip }} description {{ n.description }}\n{% endfor %}\n{% if bgp_global %}\n !\n address-family ipv4\n{% for n in bgp_global %}\n  neighbor {{ n.ip }} activate\n  neighbor {{ n.ip }} route-map RP-BGP{{ local_as }}OutBgp{{ n.remote_as }}-{{ grt_label }} out\n  neighbor {{ n.ip }} route-map RP-BGP{{ n.remote_as }}InBgp{{ local_as }}-{{ grt_label }} in\n{% endfor %}\n exit-address-family\n{% endif %}\n{% for af in bgp_vrfs %}\n !\n address-family ipv4 vrf {{ af.vrf }}\n  redistribute connected\n{% for n in af.neighbors %}\n  neighbor {{ n.ip }} remote-as {{ n.remote_as }}\n  neighbor {{ n.ip }} description {{ n.device_b }}-(vrf {{ af.vrf }})\n  neighbor {{ n.ip }} activate\n  neighbor {{ n.ip }} route-map RP-BGP{{ local_as }}OutBgp{{ n.remote_as }}-{{ af.vrf }} out\n  neighbor {{ n.ip }} route-map RP-BGP{{ n.remote_as }}InBgp{{ local_as }}-{{ af.vrf }} in\n{% endfor %}\n exit-address-family\n{% endfor %}\n!\n",
+  "interfaces.j2": "{#\n  interfaces.j2 - one sub-interface per link of the device.\n  subinterfaces: [{name, description, dot1q, vrf, ip, mask}]\n    name         physical port (Port A or Port B column)\n    dot1q        used for BOTH the sub-interface number and the encapsulation\n    description  # <remote host> - <remote port>.<dot1q> - ( <VRF> ) #\n                 empty when the remote port is unknown -> no description line\n    mask         computed from the Subnet column (/31 -> 255.255.255.254)\n    vrf          empty for a GRT link -> no \"vrf forwarding\" line\n#}\n{% for i in subinterfaces %}\ninterface {{ i.name }}.{{ i.dot1q }}\n{% if i.description %}\n description {{ i.description }}\n{% endif %}\n encapsulation dot1Q {{ i.dot1q }}\n{% if i.vrf %}\n vrf forwarding {{ i.vrf }}\n{% endif %}\n ip address {{ i.ip }} {{ i.mask }}\n!\n{% endfor %}\n",
+  "main.j2": "{#\n  main.j2 - entry point, rendered once per device by generate.py.\n  Includes each block in config order. blocks.* comes from the\n  VRF / Interfaces / BGP columns of the Generate sheet (empty = yes).\n  Comment blocks like this one never appear in the output.\n#}\n{% if blocks.vrf %}\n{% include 'vrf.j2' %}\n{% endif %}\n{% if blocks.interfaces %}\n{% include 'interfaces.j2' %}\n{% endif %}\n{% if blocks.bgp %}\n{% include 'bgp.j2' %}\n{% endif %}\nend\n",
+  "vrf.j2": "{#\n  vrf.j2 - one VRF definition per VRF used by the device.\n  vrfs:      [{name, vpn_id}]   (VPN ID from the VRFs sheet)\n  local_as:  BGP AS of this device (Devices sheet)\n  RD standard: <local AS>:<VPN ID>\n#}\n{% for v in vrfs %}\nvrf definition {{ v.name }}\n rd {{ local_as }}:{{ v.vpn_id }}\n !\n address-family ipv4\n exit-address-family\n!\n{% endfor %}\n"
+ },
+ "ios-xr": {
+  "bgp.j2": "{#\n  bgp.j2 (IOS-XR) - BGP process, one VRF per VRF, one neighbor per link.\n  local_as   BGP AS of this device\n  router_id  optional (Router ID column of the Devices sheet)\n  bgp_vrfs:  [{vrf, vpn_id, neighbors: [{ip, remote_as, device_b, description}]}]\n  bgp_global: [{ip, remote_as, device_b, description}]  neighbors of GRT links\n              (empty VRF cell): global \"address-family ipv4 unicast\", policies\n              named with grt_label (\"GRT\"). No \"redistribute connected\" in the\n              global table (it would reach every global BGP peer).\n  Same naming standards as IOS-XE:\n    RD:        <local AS>:<VPN ID>\n    neighbor:  description <remote host>-(vrf <VRF>)\n    policy in: RP-BGP<remote AS>InBgp<local AS>-<VRF>\n    policy out: RP-BGP<local AS>OutBgp<remote AS>-<VRF>\n  Differences with IOS-XE:\n    - \"address-family vpnv4 unicast\" is required at the global level when the\n      device has VRF neighbors, otherwise the VRF address-families are refused\n      at commit. Likewise \"address-family ipv4 unicast\" for GRT neighbors.\n    - the RD is set under \"vrf <name>\" here, not in the VRF definition.\n    - route-policy (RPL) instead of route-map; there is no \"activate\".\n    - eBGP sends and accepts no routes without a route-policy in AND out:\n      the route-policies must exist on the device (they are not generated).\n#}\nrouter bgp {{ local_as }}\n{% if router_id is defined %}\n bgp router-id {{ router_id }}\n{% endif %}\n{% if bgp_global %}\n address-family ipv4 unicast\n !\n{% endif %}\n{% if bgp_vrfs %}\n address-family vpnv4 unicast\n !\n{% endif %}\n{% for n in bgp_global %}\n neighbor {{ n.ip }}\n  remote-as {{ n.remote_as }}\n  description {{ n.description }}\n  address-family ipv4 unicast\n   route-policy RP-BGP{{ n.remote_as }}InBgp{{ local_as }}-{{ grt_label }} in\n   route-policy RP-BGP{{ local_as }}OutBgp{{ n.remote_as }}-{{ grt_label }} out\n  !\n !\n{% endfor %}\n{% for af in bgp_vrfs %}\n vrf {{ af.vrf }}\n  rd {{ local_as }}:{{ af.vpn_id }}\n  address-family ipv4 unicast\n   redistribute connected\n  !\n{% for n in af.neighbors %}\n  neighbor {{ n.ip }}\n   remote-as {{ n.remote_as }}\n   description {{ n.device_b }}-(vrf {{ af.vrf }})\n   address-family ipv4 unicast\n    route-policy RP-BGP{{ n.remote_as }}InBgp{{ local_as }}-{{ af.vrf }} in\n    route-policy RP-BGP{{ local_as }}OutBgp{{ n.remote_as }}-{{ af.vrf }} out\n   !\n  !\n{% endfor %}\n !\n{% endfor %}\n!\n",
+  "interfaces.j2": "{#\n  interfaces.j2 (IOS-XR) - one L3 sub-interface per link of the device.\n  subinterfaces: [{name, description, dot1q, vrf, ip, mask}]\n    name         physical port (Port A or Port B column), e.g. TenGigE0/0/0/1\n    dot1q        used for BOTH the sub-interface number and the encapsulation\n    description  # <remote host> - <remote port>.<dot1q> - ( <VRF> ) #\n                 empty when the remote port is unknown -> no description line\n    mask         computed from the Subnet column (/31 -> 255.255.255.254)\n    vrf          empty for a GRT link -> no \"vrf\" line\n  Differences with IOS-XE: \"vrf\" instead of \"vrf forwarding\",\n  \"ipv4 address\" instead of \"ip address\", \"encapsulation dot1q\" in lower case.\n#}\n{% for i in subinterfaces %}\ninterface {{ i.name }}.{{ i.dot1q }}\n{% if i.description %}\n description {{ i.description }}\n{% endif %}\n{% if i.vrf %}\n vrf {{ i.vrf }}\n{% endif %}\n ipv4 address {{ i.ip }} {{ i.mask }}\n encapsulation dot1q {{ i.dot1q }}\n!\n{% endfor %}\n",
+  "main.j2": "{#\n  main.j2 (IOS-XR) - entry point, rendered once per device by generate.py\n  when the OS column of the Generate sheet is ios-xr.\n  Same data and same blocks as templates/ios-xe/. blocks.* comes from the\n  VRF / Interfaces / BGP columns of the Generate sheet (empty = yes).\n  No \"end\" or \"commit\" at the end on purpose: paste in configure mode,\n  check with \"show configuration\", then commit yourself.\n#}\n{% if blocks.vrf %}\n{% include 'vrf.j2' %}\n{% endif %}\n{% if blocks.interfaces %}\n{% include 'interfaces.j2' %}\n{% endif %}\n{% if blocks.bgp %}\n{% include 'bgp.j2' %}\n{% endif %}\n",
+  "vrf.j2": "{#\n  vrf.j2 (IOS-XR) - one VRF per VRF used by the device (none for GRT links).\n  vrfs: [{name, vpn_id}]\n  Differences with IOS-XE: the RD is not set here but under\n  \"router bgp / vrf <name>\" (see bgp.j2).\n#}\n{% for v in vrfs %}\nvrf {{ v.name }}\n address-family ipv4 unicast\n !\n!\n{% endfor %}\n"
+ }
+}</script>
+
+<script>
+/* ENGINE START ==============================================================
+ * Network Config Tools — offline engine (no network, no DOM).
+ * Faithful JavaScript port of generate.py (Excel -> configs) and
+ * dns_names.py (running-configs -> DNS records). Every function names the
+ * Python function it reproduces. Keep both in sync when the rules change.
+ * ========================================================================== */
+"use strict";
+
+/* ---------------------------------------------------------------------------
+ * 1. ZIP reader (an .xlsx file is a ZIP archive)
+ * ------------------------------------------------------------------------- */
+async function unzip(bytes) {
+  // Returns {path: Uint8Array}. Supports "stored" and "deflate" entries.
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error("not a valid .xlsx file (ZIP directory not found)");
+  const count = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  const out = {};
+  const dec = new TextDecoder("utf-8");
+  for (let n = 0; n < count; n++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error("corrupt .xlsx file");
+    const method = dv.getUint16(p + 10, true);
+    const csize = dv.getUint32(p + 20, true);
+    const nameLen = dv.getUint16(p + 28, true);
+    const extraLen = dv.getUint16(p + 30, true);
+    const commentLen = dv.getUint16(p + 32, true);
+    const local = dv.getUint32(p + 42, true);
+    const name = dec.decode(bytes.subarray(p + 46, p + 46 + nameLen));
+    p += 46 + nameLen + extraLen + commentLen;
+    const lNameLen = dv.getUint16(local + 26, true);
+    const lExtraLen = dv.getUint16(local + 28, true);
+    const start = local + 30 + lNameLen + lExtraLen;
+    const raw = bytes.subarray(start, start + csize);
+    if (method === 0) out[name] = raw;
+    else if (method === 8) out[name] = await inflateRaw(raw);
+    else throw new Error("unsupported compression in .xlsx file");
+  }
+  return out;
+}
+
+async function inflateRaw(data) {
+  const ds = new DecompressionStream("deflate-raw");
+  const stream = new Blob([data]).stream().pipeThrough(ds);
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/* ---------------------------------------------------------------------------
+ * 2. Excel reader -> workbook {sheetnames, sheets: {name: {title, rows, merged}}}
+ *    Mirrors openpyxl.load_workbook(path, data_only=True) for what generate.py uses.
+ * ------------------------------------------------------------------------- */
+function xmlDecode(s) {
+  return s.replace(/&(#x[0-9a-fA-F]+|#\d+|lt|gt|amp|quot|apos);/g, (m, e) => {
+    if (e === "lt") return "<";
+    if (e === "gt") return ">";
+    if (e === "amp") return "&";
+    if (e === "quot") return '"';
+    if (e === "apos") return "'";
+    const code = e[1] === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+    return String.fromCodePoint(code);
+  }).replace(/_x([0-9A-Fa-f]{4})_/g, (m, h) => String.fromCharCode(parseInt(h, 16)));
+}
+
+function xmlAttrs(s) {
+  const a = {};
+  for (const m of s.matchAll(/([\w:]+)\s*=\s*"([^"]*)"/g)) a[m[1]] = xmlDecode(m[2]);
+  for (const m of s.matchAll(/([\w:]+)\s*=\s*'([^']*)'/g)) a[m[1]] = xmlDecode(m[2]);
+  return a;
+}
+
+function richText(xml) {
+  // Text of a <si> or <is>: every <t>, phonetic runs (<rPh>) excluded.
+  const clean = xml.replace(/<rPh\b[\s\S]*?<\/rPh>/g, "");
+  let t = "";
+  for (const m of clean.matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>|<t(?:\s[^>]*)?\/>/g)) t += xmlDecode(m[1] || "");
+  return t;
+}
+
+function colIndex(ref) {
+  // "BC12" -> {col: 55, row: 12} (1-based)
+  const m = /^\$?([A-Za-z]+)\$?(\d+)$/.exec(ref);
+  if (!m) return null;
+  let c = 0;
+  for (const ch of m[1].toUpperCase()) c = c * 26 + (ch.charCodeAt(0) - 64);
+  return { col: c, row: parseInt(m[2], 10) };
+}
+
+function resolveTarget(base, target) {
+  if (target.startsWith("/")) return target.slice(1);
+  const parts = base.split("/").slice(0, -1);
+  for (const seg of target.split("/")) {
+    if (seg === "..") parts.pop();
+    else if (seg !== ".") parts.push(seg);
+  }
+  return parts.join("/");
+}
+
+async function readWorkbook(bytes) {
+  const files = await unzip(bytes);
+  const text = (p) => (files[p] ? new TextDecoder("utf-8").decode(files[p]) : null);
+  // main workbook part from _rels/.rels (normally xl/workbook.xml)
+  let wbPath = "xl/workbook.xml";
+  const rootRels = text("_rels/.rels");
+  if (rootRels) {
+    for (const m of rootRels.matchAll(/<Relationship\b([^>]*)\/?>/g)) {
+      const a = xmlAttrs(m[1]);
+      if ((a.Type || "").endsWith("/officeDocument")) wbPath = resolveTarget("", a.Target);
+    }
+  }
+  const wbXml = text(wbPath);
+  if (!wbXml) throw new Error("not an Excel workbook (" + wbPath + " missing)");
+  const relsPath = wbPath.replace(/[^/]+$/, "_rels/") + wbPath.split("/").pop() + ".rels";
+  const rels = {};
+  for (const m of (text(relsPath) || "").matchAll(/<Relationship\b([^>]*)\/?>/g)) {
+    const a = xmlAttrs(m[1]);
+    rels[a.Id] = resolveTarget(wbPath, a.Target);
+  }
+  const shared = [];
+  const ssPath = Object.values(rels).find((t) => /sharedStrings\.xml$/i.test(t)) || "xl/sharedStrings.xml";
+  const ssXml = text(ssPath);
+  if (ssXml) for (const m of ssXml.matchAll(/<si>([\s\S]*?)<\/si>|<si\/>/g)) shared.push(richText(m[1] || ""));
+
+  const wb = { sheetnames: [], sheets: {} };
+  for (const m of wbXml.matchAll(/<sheet\b([^>]*)\/?>/g)) {
+    const a = xmlAttrs(m[1]);
+    const rid = a["r:id"] || Object.entries(a).find(([k]) => /:id$/.test(k))?.[1];
+    const xml = text(rels[rid]);
+    if (xml === null) continue; // chart sheets etc.
+    wb.sheetnames.push(a.name);
+    wb.sheets[a.name] = parseSheet(a.name, xml, shared);
+  }
+  return wb;
+}
+
+function parseSheet(title, xml, shared) {
+  // Returns {title, rows: [[value...]], merged: [{r1,c1,r2,c2}]} like openpyxl iter_rows(values_only)
+  const cells = new Map();
+  let maxRow = 0, maxCol = 0;
+  const data = (/<sheetData\b[^>]*>([\s\S]*?)<\/sheetData>/.exec(xml) || [])[1] || "";
+  let rowNo = 0;
+  for (const rm of data.matchAll(/<row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/g)) {
+    const ra = xmlAttrs(rm[1]);
+    rowNo = ra.r ? parseInt(ra.r, 10) : rowNo + 1;
+    let colNo = 0;
+    for (const cm of (rm[2] || "").matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+      const ca = xmlAttrs(cm[1]);
+      const pos = ca.r ? colIndex(ca.r) : { col: colNo + 1, row: rowNo };
+      colNo = pos.col;
+      const body = cm[2] || "";
+      const vMatch = /<v(?:\s[^>]*)?>([\s\S]*?)<\/v>/.exec(body);
+      const v = vMatch ? xmlDecode(vMatch[1]) : null;
+      let value = null;
+      const t = ca.t || "n";
+      if (t === "s") value = v === null ? null : shared[parseInt(v, 10)] ?? null;
+      else if (t === "inlineStr") value = richText((/<is>([\s\S]*?)<\/is>/.exec(body) || [])[1] || "");
+      else if (t === "str" || t === "e" || t === "d") value = v;
+      else if (t === "b") value = v === null ? null : v.trim() !== "0";
+      else if (v !== null && v !== "") value = /[.eE]/.test(v) ? new PyFloat(parseFloat(v)) : parseInt(v, 10);
+      cells.set(pos.row + ":" + pos.col, value);
+      maxRow = Math.max(maxRow, pos.row);
+      maxCol = Math.max(maxCol, pos.col);
+    }
+  }
+  const merged = [];
+  for (const mm of xml.matchAll(/<mergeCell\b([^>]*)\/?>/g)) {
+    const ref = xmlAttrs(mm[1]).ref || "";
+    const [a, b] = ref.split(":");
+    const p1 = colIndex(a), p2 = colIndex(b || a);
+    if (!p1 || !p2) continue;
+    merged.push({ r1: p1.row, c1: p1.col, r2: p2.row, c2: p2.col });
+    maxRow = Math.max(maxRow, p2.row);
+    maxCol = Math.max(maxCol, p2.col);
+  }
+  if (maxRow === 0) { maxRow = 1; maxCol = 1; }
+  const rows = [];
+  for (let r = 1; r <= maxRow; r++) {
+    const row = [];
+    for (let c = 1; c <= maxCol; c++) {
+      const k = r + ":" + c;
+      row.push(cells.has(k) ? cells.get(k) : null);
+    }
+    rows.push(row);
+  }
+  return { title, rows, merged, cell: (r, c) => (cells.has(r + ":" + c) ? cells.get(r + ":" + c) : null) };
+}
+
+/* Python-like values ---------------------------------------------------------- */
+class PyFloat {
+  // Excel numbers written with a decimal point or exponent (openpyxl gives a float)
+  constructor(v) { this.v = v; }
+}
+
+function pyFloatStr(x) {
+  // Python repr() of a float
+  if (Number.isNaN(x)) return "nan";
+  if (!Number.isFinite(x)) return x > 0 ? "inf" : "-inf";
+  if (Number.isInteger(x) && Math.abs(x) < 1e16) return x.toFixed(1);
+  const [mant, expStr] = x.toExponential().split("e");
+  const exp = parseInt(expStr, 10);
+  const digits = mant.replace("-", "").replace(".", "");
+  const sign = x < 0 ? "-" : "";
+  if (exp >= -4 && exp < 16) {
+    if (exp < 0) return sign + "0." + "0".repeat(-exp - 1) + digits;
+    const intPart = digits.slice(0, exp + 1).padEnd(exp + 1, "0");
+    const frac = digits.slice(exp + 1);
+    return sign + intPart + "." + (frac || "0");
+  }
+  const m = digits.length > 1 ? digits[0] + "." + digits.slice(1) : digits;
+  return sign + m + "e" + (exp < 0 ? "-" : "+") + String(Math.abs(exp)).padStart(2, "0");
+}
+
+function pyStr(v) {
+  // Python str() of an Excel / template value
+  if (v === null || v === undefined) return "None";
+  if (v === true) return "True";
+  if (v === false) return "False";
+  if (v instanceof PyFloat) return pyFloatStr(v.v);
+  if (typeof v === "number") return String(v);
+  if (Array.isArray(v)) return "[" + v.map(pyRepr).join(", ") + "]";
+  if (v instanceof Map) return "{" + [...v].map(([k, x]) => pyRepr(k) + ": " + pyRepr(x)).join(", ") + "}";
+  if (typeof v === "object") return "{" + Object.entries(v).map(([k, x]) => pyRepr(k) + ": " + pyRepr(x)).join(", ") + "}";
+  return String(v);
+}
+
+function pyRepr(v) {
+  if (typeof v === "string") {
+    const q = v.includes("'") && !v.includes('"') ? '"' : "'";
+    let s = v.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+    if (q === "'") s = s.replace(/'/g, "\\'");
+    return q + s + q;
+  }
+  return pyStr(v);
+}
+
+function pyTruthy(v) {
+  if (v === null || v === undefined || v === false || v === 0 || v === "") return false;
+  if (v instanceof PyFloat) return v.v !== 0;
+  if (Array.isArray(v)) return v.length > 0;
+  if (v instanceof Map) return v.size > 0;
+  if (v instanceof Undef) return false;
+  return true;
+}
+
+/* ---------------------------------------------------------------------------
+ * 3. ipaddress (IPv4 + IPv6), reproducing Python's messages
+ * ------------------------------------------------------------------------- */
+const V4_MAX = (1n << 32n) - 1n, V6_MAX = (1n << 128n) - 1n;
+
+function parseV4(s) {
+  const parts = s.split(".");
+  if (parts.length !== 4) return null;
+  let n = 0n;
+  for (const p of parts) {
+    if (!/^[0-9]{1,3}$/.test(p)) return null;
+    if (p.length > 1 && p[0] === "0") return null; // leading zeros refused (Python >= 3.9.5)
+    const v = parseInt(p, 10);
+    if (v > 255) return null;
+    n = (n << 8n) | BigInt(v);
+  }
+  return n;
+}
+
+function parseV6(s) {
+  if (!s || s.includes("%")) return null;
+  let parts = s.split(":");
+  if (parts.length < 3) return null;
+  let tail = [];
+  if (parts[parts.length - 1].includes(".")) {
+    const v4 = parseV4(parts.pop());
+    if (v4 === null) return null;
+    tail = [(v4 >> 16n) & 0xffffn, v4 & 0xffffn];
+  }
+  const maxParts = 8 - tail.length;
+  if (parts.length > maxParts + 1) return null;
+  let skip = -1;
+  for (let i = 1; i < parts.length - 1; i++) {
+    if (parts[i] === "") { if (skip >= 0) return null; skip = i; }
+  }
+  let hi, lo;
+  if (skip >= 0) {
+    hi = skip; lo = parts.length - skip - 1;
+    if (parts[0] === "") { hi -= 1; if (hi) return null; }
+    if (parts[parts.length - 1] === "") { lo -= 1; if (lo) return null; }
+    if (hi + lo >= maxParts) return null;
+  } else {
+    if (parts.length !== maxParts) return null;
+    if (parts[0] === "" || parts[parts.length - 1] === "") return null;
+    hi = parts.length; lo = 0;
+  }
+  const groups = [];
+  for (let i = 0; i < hi; i++) groups.push(parts[i]);
+  for (let i = 0; i < maxParts - hi - lo; i++) groups.push("0");
+  for (let i = parts.length - lo; i < parts.length; i++) groups.push(parts[i]);
+  let n = 0n;
+  for (const g of groups) {
+    if (!/^[0-9a-fA-F]{1,4}$/.test(g)) return null;
+    n = (n << 16n) | BigInt(parseInt(g, 16));
+  }
+  for (const t of tail) n = (n << 16n) | t;
+  return n;
+}
+
+function fmtV4(n) {
+  return [24n, 16n, 8n, 0n].map((s) => String((n >> s) & 255n)).join(".");
+}
+
+function fmtV6(n) {
+  const g = [];
+  for (let i = 7; i >= 0; i--) g.push(((n >> BigInt(i * 16)) & 0xffffn).toString(16));
+  let best = -1, bestLen = 0, cur = -1, curLen = 0;
+  for (let i = 0; i < 8; i++) {
+    if (g[i] === "0") {
+      if (cur < 0) { cur = i; curLen = 0; }
+      curLen++;
+      if (curLen > bestLen) { best = cur; bestLen = curLen; }
+    } else cur = -1;
+  }
+  if (bestLen > 1) {
+    const left = g.slice(0, best).join(":"), right = g.slice(best + bestLen).join(":");
+    return left + "::" + right;
+  }
+  return g.join(":");
+}
+
+class IPAddr {
+  constructor(version, n) { this.version = version; this.n = n; }
+  toString() { return this.version === 4 ? fmtV4(this.n) : fmtV6(this.n); }
+  equals(o) { return o.version === this.version && o.n === this.n; }
+}
+
+function ipAddress(s) {
+  // ipaddress.ip_address(s)
+  const v4 = parseV4(s);
+  if (v4 !== null) return new IPAddr(4, v4);
+  const v6 = parseV6(s);
+  if (v6 !== null) return new IPAddr(6, v6);
+  throw new Error(pyRepr(s) + " does not appear to be an IPv4 or IPv6 address");
+}
+
+function prefixFromMask(n, bits) {
+  // contiguous netmask -> prefix length, else null
+  const max = bits === 32 ? V4_MAX : V6_MAX;
+  for (let p = 0; p <= bits; p++) {
+    const mask = p === 0 ? 0n : (max << BigInt(bits - p)) & max;
+    if (mask === n) return p;
+  }
+  return null;
+}
+
+class IPNet {
+  constructor(version, addr, prefix) {
+    this.version = version; this.addr = addr; this.prefix = prefix;
+    const bits = version === 4 ? 32 : 128, max = version === 4 ? V4_MAX : V6_MAX;
+    this.mask = prefix === 0 ? 0n : (max << BigInt(bits - prefix)) & max;
+  }
+  get netmask() { return new IPAddr(this.version, this.mask); }
+  contains(ip) { return ip.version === this.version && (ip.n & this.mask) === this.addr; }
+  toString() { return new IPAddr(this.version, this.addr) + "/" + this.prefix; }
+}
+
+function splitAddrPrefix(s) {
+  const parts = s.split("/");
+  if (parts.length > 2) return null;
+  return [parts[0], parts.length === 2 ? parts[1] : null];
+}
+
+function ipNetworkTry(s, strict, version) {
+  const sp = splitAddrPrefix(s);
+  if (!sp) return null;
+  const [a, p] = sp;
+  const bits = version === 4 ? 32 : 128;
+  const n = version === 4 ? parseV4(a) : parseV6(a);
+  if (n === null) return null;
+  let prefix;
+  if (p === null) prefix = bits;
+  else if (/^[0-9]+$/.test(p)) {
+    prefix = parseInt(p, 10);
+    if (prefix > bits) return null;
+  } else if (version === 4) {
+    const m = parseV4(p);
+    if (m === null) return null;
+    prefix = prefixFromMask(m, 32);
+    if (prefix === null) {
+      prefix = prefixFromMask(m ^ V4_MAX, 32); // hostmask form
+      if (prefix === null) return null;
+    }
+  } else return null;
+  const net = new IPNet(version, n, prefix);
+  if ((n & net.mask) !== n) {
+    if (strict) return { hostBits: new IPNet(version, n, prefix) };
+    net.addr = n & net.mask;
+  }
+  return net;
+}
+
+function ipNetwork(s, strict = true) {
+  // ipaddress.ip_network(s, strict)
+  for (const v of [4, 6]) {
+    const r = ipNetworkTry(s, strict, v);
+    if (r && r.hostBits) {
+      const shown = new IPAddr(v, r.hostBits.addr) + "/" + r.hostBits.prefix;
+      throw new Error(shown + " has host bits set");
+    }
+    if (r) return r;
+  }
+  throw new Error(pyRepr(s) + " does not appear to be an IPv4 or IPv6 network");
+}
+
+function ipv4Interface(s) {
+  // ipaddress.IPv4Interface(s) -> {ip, prefix} or throws
+  const sp = splitAddrPrefix(s);
+  if (!sp) throw new Error("bad");
+  const n = parseV4(sp[0]);
+  if (n === null) throw new Error("bad");
+  const r = ipNetworkTry(sp[1] === null ? sp[0] : sp[0] + "/" + sp[1], false, 4);
+  if (!r || r.hostBits) throw new Error("bad");
+  return { ip: fmtV4(n), prefix: r.prefix, n };
+}
+
+/* ---------------------------------------------------------------------------
+ * 4. Mini Jinja2 (the subset used by generate.py templates and conf2jinja drafts)
+ *    trim_blocks=True, keep_trailing_newline=True, autoescape off.
+ *    Supported: {{ expr }}, {# #}, {% if/elif/else/endif %}, {% for/else/endfor %},
+ *    {% include %}, {% set %}, {% raw %}/{% endraw %}, whitespace control - and +,
+ *    tests "is defined / is undefined / is none", filters default, upper, lower,
+ *    trim, length, join, string, int, replace, first, last.
+ * ------------------------------------------------------------------------- */
+class TemplateError extends Error {}
+class UndefinedError extends TemplateError {}
+
+class Undef {
+  // Missing value. mode "strict" (StrictUndefined) or "lenient" (SkipUndefined)
+  constructor(name, hint, ctx) { this.name = name; this.hint = hint; this.ctx = ctx; }
+  fail() { throw new UndefinedError(this.hint || pyRepr(this.name) + " is undefined"); }
+  note() { this.ctx.seen.add(this.name || "?"); }
+}
+
+const SKIP = "\u0000SKIP\u0000";
+
+function tokenizeTemplate(src, name) {
+  // Returns a flat token list: {type: text|var|block|comment, value, lstrip, rstrip, keepnl}
+  const tokens = [];
+  let i = 0;
+  const re = /\{\{|\{%|\{#/g;
+  while (i < src.length) {
+    re.lastIndex = i;
+    const m = re.exec(src);
+    if (!m) { tokens.push({ type: "text", value: src.slice(i) }); break; }
+    if (m.index > i) tokens.push({ type: "text", value: src.slice(i, m.index) });
+    const open = m[0];
+    let j = m.index + 2;
+    let lstrip = false;
+    if (src[j] === "-") { lstrip = true; j++; } else if (src[j] === "+") j++;
+    if (open === "{#") {
+      const end = src.indexOf("#}", j);
+      if (end < 0) throw new TemplateError("unclosed comment in " + name);
+      const rs = src[end - 1] === "-" , keep = src[end - 1] === "+";
+      tokens.push({ type: "comment", lstrip, rstrip: rs, keepnl: keep, trim: true });
+      i = end + 2;
+      continue;
+    }
+    const close = open === "{{" ? "}}" : "%}";
+    // find the closing delimiter outside string literals
+    let k = j, q = null;
+    for (; k < src.length; k++) {
+      const c = src[k];
+      if (q) { if (c === "\\") k++; else if (c === q) q = null; continue; }
+      if (c === "'" || c === '"') { q = c; continue; }
+      if (src.startsWith(close, k)) break;
+    }
+    if (k >= src.length) throw new TemplateError("unclosed tag in " + name);
+    let inner = src.slice(j, k);
+    let rstrip = false, keepnl = false;
+    if (inner.endsWith("-")) { rstrip = true; inner = inner.slice(0, -1); }
+    else if (inner.endsWith("+")) { keepnl = true; inner = inner.slice(0, -1); }
+    inner = inner.trim();
+    i = k + 2;
+    if (open === "{%" && /^raw$/.test(inner)) {
+      // raw block: everything until {% endraw %} is literal text (no newline trim after {% raw %})
+      const endRe = /\{%([-+]?)\s*endraw\s*([-+]?)%\}/g;
+      endRe.lastIndex = i;
+      const em = endRe.exec(src);
+      if (!em) throw new TemplateError("missing endraw in " + name);
+      tokens.push({ type: "block", value: "raw", lstrip, rstrip, keepnl: true });
+      tokens.push({ type: "text", value: src.slice(i, em.index), raw: true });
+      tokens.push({ type: "block", value: "endraw", lstrip: em[1] === "-", rstrip: em[2] === "-", keepnl: em[2] === "+" });
+      i = em.index + em[0].length;
+      continue;
+    }
+    tokens.push({ type: open === "{{" ? "var" : "block", value: inner, lstrip, rstrip, keepnl });
+  }
+  // whitespace control: "-" strips, trim_blocks removes one newline after block tags and comments
+  for (let t = 0; t < tokens.length; t++) {
+    const tok = tokens[t];
+    if (tok.type === "text") continue;
+    const prev = tokens[t - 1], next = tokens[t + 1];
+    if (tok.lstrip && prev && prev.type === "text" && !(prev.raw)) prev.value = prev.value.replace(/\s+$/, "");
+    if (next && next.type === "text" && !next.raw) {
+      if (tok.rstrip) next.value = next.value.replace(/^\s+/, "");
+      else if ((tok.type === "block" || tok.type === "comment") && !tok.keepnl && tok.value !== "raw")
+        next.value = next.value.replace(/^\n/, "");
+    }
+  }
+  if (tokens.length && tokens[0].type === "text" && tokens[0].raw) { /* nothing */ }
+  return tokens;
+}
+
+/* Expression parser ----------------------------------------------------------- */
+function lexExpr(s) {
+  const toks = [];
+  const re = /\s*(?:(\d+\.\d+|\d+)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|([A-Za-z_][A-Za-z_0-9]*)|(==|!=|<=|>=|\*\*|\/\/|[-+*\/%~<>.,()\[\]|:=]))/y;
+  let i = 0;
+  s = s.trim();
+  while (i < s.length) {
+    re.lastIndex = i;
+    const m = re.exec(s);
+    if (!m) throw new TemplateError("unexpected character in expression: " + s.slice(i));
+    i = re.lastIndex;
+    if (m[1] !== undefined) toks.push({ t: "num", v: m[1].includes(".") ? new PyFloat(parseFloat(m[1])) : parseInt(m[1], 10) });
+    else if (m[2] !== undefined) toks.push({ t: "str", v: m[2].slice(1, -1).replace(/\\(.)/g, (x, c) => ({ n: "\n", t: "\t", r: "\r" }[c] || c)) });
+    else if (m[3] !== undefined) toks.push({ t: "name", v: m[3] });
+    else toks.push({ t: "op", v: m[4] });
+    while (i < s.length && /\s/.test(s[i])) i++;
+  }
+  return toks;
+}
+
+function parseExpr(src) {
+  const toks = lexExpr(src);
+  let p = 0;
+  const peek = (v, t) => { const k = toks[p]; return k && (v === undefined || k.v === v) && (t === undefined || k.t === t); };
+  const eat = (v, t) => { if (!peek(v, t)) throw new TemplateError("expected " + (v || t) + " in expression: " + src); return toks[p++]; };
+  const isKw = (v) => peek(v, "name");
+
+  function orExpr() { let l = andExpr(); while (isKw("or")) { p++; const r = andExpr(); l = { k: "or", l, r }; } return l; }
+  function andExpr() { let l = notExpr(); while (isKw("and")) { p++; const r = notExpr(); l = { k: "and", l, r }; } return l; }
+  function notExpr() { if (isKw("not")) { p++; return { k: "not", e: notExpr() }; } return compare(); }
+  function compare() {
+    let l = concat();
+    for (;;) {
+      if (peek(undefined, "op") && ["==", "!=", "<", ">", "<=", ">="].includes(toks[p].v)) {
+        const op = toks[p++].v; l = { k: "cmp", op, l, r: concat() };
+      } else if (isKw("in")) { p++; l = { k: "in", l, r: concat(), neg: false }; }
+      else if (isKw("not") && toks[p + 1] && toks[p + 1].v === "in") { p += 2; l = { k: "in", l, r: concat(), neg: true }; }
+      else if (isKw("is")) {
+        p++;
+        let neg = false;
+        if (isKw("not")) { p++; neg = true; }
+        const test = eat(undefined, "name").v;
+        l = { k: "test", test, e: l, neg };
+      } else return l;
+    }
+  }
+  function concat() { let l = additive(); while (peek("~", "op")) { p++; l = { k: "concat", l, r: additive() }; } return l; }
+  function additive() {
+    let l = unary();
+    while (peek("+", "op") || peek("-", "op")) { const op = toks[p++].v; l = { k: "arith", op, l, r: unary() }; }
+    return l;
+  }
+  function unary() { if (peek("-", "op")) { p++; return { k: "neg", e: unary() }; } return postfix(primary()); }
+  function primary() {
+    const k = toks[p];
+    if (!k) throw new TemplateError("unexpected end of expression: " + src);
+    if (k.t === "num" || k.t === "str") { p++; return { k: "lit", v: k.v }; }
+    if (k.t === "name") {
+      p++;
+      if (["true", "True"].includes(k.v)) return { k: "lit", v: true };
+      if (["false", "False"].includes(k.v)) return { k: "lit", v: false };
+      if (["none", "None"].includes(k.v)) return { k: "lit", v: null };
+      return { k: "name", name: k.v };
+    }
+    if (k.v === "(") { p++; const e = condExpr(); eat(")"); return e; }
+    if (k.v === "[") {
+      p++; const items = [];
+      while (!peek("]")) { items.push(orExpr()); if (!peek("]")) eat(","); }
+      eat("]"); return { k: "list", items };
+    }
+    throw new TemplateError("unexpected '" + k.v + "' in expression: " + src);
+  }
+  function postfix(e) {
+    for (;;) {
+      if (peek(".", "op")) { p++; e = { k: "attr", e, name: eat(undefined, "name").v }; }
+      else if (peek("[", "op")) { p++; const idx = orExpr(); eat("]"); e = { k: "item", e, idx }; }
+      else if (peek("|", "op")) {
+        p++;
+        const name = eat(undefined, "name").v, args = [];
+        if (peek("(", "op")) { p++; while (!peek(")")) { args.push(orExpr()); if (!peek(")")) eat(","); } eat(")"); }
+        e = { k: "filter", e, name, args };
+      } else return e;
+    }
+  }
+  function condExpr() {
+    const body = orExpr();
+    if (!isKw("if")) return body;
+    p++;
+    const cond = orExpr();
+    let other = null;
+    if (isKw("else")) { p++; other = condExpr(); }
+    return { k: "cond", cond, body, other };
+  }
+  const e = condExpr();
+  return { e, rest: toks.slice(p) };
+}
+
+function exprOnly(src) {
+  const r = parseExpr(src);
+  if (r.rest.length) throw new TemplateError("unexpected '" + r.rest[0].v + "' in expression: " + src);
+  return r.e;
+}
+
+/* Template tree ---------------------------------------------------------------- */
+function buildTree(tokens, name) {
+  let pos = 0;
+  function parseBody(stops) {
+    const body = [];
+    while (pos < tokens.length) {
+      const tok = tokens[pos];
+      if (tok.type === "text") { if (tok.value) body.push({ k: "text", v: tok.value }); pos++; continue; }
+      if (tok.type === "comment") { pos++; continue; }
+      if (tok.type === "var") { body.push({ k: "out", e: exprOnly(tok.value) }); pos++; continue; }
+      const word = tok.value.split(/\s+/)[0];
+      if (stops.includes(word)) return { body, stop: word, tok };
+      pos++;
+      if (word === "raw") { const t = tokens[pos++]; body.push({ k: "text", v: t.value }); pos++; continue; }
+      if (word === "if") {
+        const node = { k: "if", branches: [{ cond: exprOnly(tok.value.slice(2)), body: null }], other: null };
+        let r = parseBody(["elif", "else", "endif"]);
+        node.branches[0].body = r.body;
+        while (r.stop === "elif") { const b = { cond: exprOnly(r.tok.value.slice(4)), body: null }; pos++; r = parseBody(["elif", "else", "endif"]); b.body = r.body; node.branches.push(b); }
+        if (r.stop === "else") { pos++; r = parseBody(["endif"]); node.other = r.body; }
+        if (r.stop !== "endif") throw new TemplateError("missing endif in " + name);
+        pos++;
+        body.push(node);
+        continue;
+      }
+      if (word === "for") {
+        const m = /^for\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s+in\s+([\s\S]+)$/.exec(tok.value);
+        if (!m) throw new TemplateError("invalid for tag: " + tok.value);
+        const node = { k: "for", vars: m[1].split(",").map((s) => s.trim()), iter: exprOnly(m[2]), body: null, other: null };
+        let r = parseBody(["else", "endfor"]);
+        node.body = r.body;
+        if (r.stop === "else") { pos++; r = parseBody(["endfor"]); node.other = r.body; }
+        if (r.stop !== "endfor") throw new TemplateError("missing endfor in " + name);
+        pos++;
+        body.push(node);
+        continue;
+      }
+      if (word === "include") {
+        let rest = tok.value.slice(7).trim(), ignore = false;
+        rest = rest.replace(/\s+(with|without)\s+context\s*$/, "");
+        if (/\s+ignore\s+missing\s*$/.test(rest)) { ignore = true; rest = rest.replace(/\s+ignore\s+missing\s*$/, ""); }
+        body.push({ k: "include", e: exprOnly(rest), ignore });
+        continue;
+      }
+      if (word === "set") {
+        const m = /^set\s+([A-Za-z_]\w*)\s*=\s*([\s\S]+)$/.exec(tok.value);
+        if (!m) throw new TemplateError("unsupported set tag: " + tok.value);
+        body.push({ k: "set", name: m[1], e: exprOnly(m[2]) });
+        continue;
+      }
+      throw new TemplateError("unsupported tag '" + word + "' in " + name);
+    }
+    if (stops.length) throw new TemplateError("missing " + stops[stops.length - 1] + " in " + name);
+    return { body };
+  }
+  return parseBody([]).body;
+}
+
+/* Rendering ---------------------------------------------------------------------- */
+function typeName(v) {
+  if (typeof v === "string") return "str object";
+  if (Array.isArray(v)) return "list object";
+  if (typeof v === "number" || v instanceof PyFloat) return Number.isInteger(v) ? "int object" : "float object";
+  if (typeof v === "boolean") return "bool object";
+  if (v === null) return "None";
+  return "dict object";
+}
+
+function getAttr(obj, name, ctx) {
+  if (obj instanceof Undef) {
+    if (ctx.lenient) return obj; // ChainableUndefined
+    obj.fail();
+  }
+  if (obj instanceof Map) return obj.has(name) ? obj.get(name) : new Undef(name, pyRepr(typeName(obj)) + " has no attribute " + pyRepr(name), ctx);
+  if (obj !== null && typeof obj === "object" && !Array.isArray(obj) && !(obj instanceof PyFloat) && Object.prototype.hasOwnProperty.call(obj, name)) return obj[name];
+  return new Undef(name, pyRepr(typeName(obj)) + " has no attribute " + pyRepr(name), ctx);
+}
+
+function needDefined(v, ctx) {
+  if (v instanceof Undef) { if (ctx.lenient) return v; v.fail(); }
+  return v;
+}
+
+function evalExpr(e, scope, ctx) {
+  switch (e.k) {
+    case "lit": return e.v;
+    case "list": return e.items.map((x) => evalExpr(x, scope, ctx));
+    case "name": {
+      for (let s = scope; s; s = s.parent) if (s.vars.has(e.name)) return s.vars.get(e.name);
+      return new Undef(e.name, null, ctx);
+    }
+    case "attr": return getAttr(evalExpr(e.e, scope, ctx), e.name, ctx);
+    case "item": {
+      const o = evalExpr(e.e, scope, ctx), idx = evalExpr(e.idx, scope, ctx);
+      if (o instanceof Undef) { if (ctx.lenient) return o; o.fail(); }
+      if (Array.isArray(o) && typeof idx === "number") { const i = idx < 0 ? o.length + idx : idx; return i >= 0 && i < o.length ? o[i] : new Undef(String(idx), "list object has no element " + idx, ctx); }
+      return getAttr(o, String(idx), ctx);
+    }
+    case "cond":
+      if (truth(evalExpr(e.cond, scope, ctx), ctx)) return evalExpr(e.body, scope, ctx);
+      return e.other ? evalExpr(e.other, scope, ctx) : ""; // Jinja prints nothing
+    case "not": return !truth(evalExpr(e.e, scope, ctx), ctx);
+    case "and": { const l = evalExpr(e.l, scope, ctx); return truth(l, ctx) ? evalExpr(e.r, scope, ctx) : l; }
+    case "or": { const l = evalExpr(e.l, scope, ctx); return truth(l, ctx) ? l : evalExpr(e.r, scope, ctx); }
+    case "test": {
+      const v = evalExpr(e.e, scope, ctx);
+      let r;
+      if (e.test === "defined") r = !(v instanceof Undef);
+      else if (e.test === "undefined") r = v instanceof Undef;
+      else if (e.test === "none") r = v === null;
+      else if (e.test === "string") r = typeof v === "string";
+      else throw new TemplateError("unsupported test '" + e.test + "'");
+      return e.neg ? !r : r;
+    }
+    case "cmp": {
+      const l = needDefined(evalExpr(e.l, scope, ctx), ctx), r = needDefined(evalExpr(e.r, scope, ctx), ctx);
+      const a = l instanceof PyFloat ? l.v : l, b = r instanceof PyFloat ? r.v : r;
+      if (e.op === "==") return a === b || (a instanceof Undef && b instanceof Undef);
+      if (e.op === "!=") return !(a === b);
+      if (e.op === "<") return a < b;
+      if (e.op === ">") return a > b;
+      if (e.op === "<=") return a <= b;
+      return a >= b;
+    }
+    case "in": {
+      const l = evalExpr(e.l, scope, ctx), r = needDefined(evalExpr(e.r, scope, ctx), ctx);
+      let res = false;
+      if (typeof r === "string") res = r.includes(pyStr(l));
+      else if (Array.isArray(r)) res = r.includes(l);
+      else if (r instanceof Map) res = r.has(l);
+      else if (r && typeof r === "object") res = Object.prototype.hasOwnProperty.call(r, l);
+      return e.neg ? !res : res;
+    }
+    case "concat": return toText(evalExpr(e.l, scope, ctx), ctx) + toText(evalExpr(e.r, scope, ctx), ctx);
+    case "arith": {
+      const l = needDefined(evalExpr(e.l, scope, ctx), ctx), r = needDefined(evalExpr(e.r, scope, ctx), ctx);
+      if (typeof l === "string" && typeof r === "string" && e.op === "+") return l + r;
+      const a = l instanceof PyFloat ? l.v : l, b = r instanceof PyFloat ? r.v : r;
+      return e.op === "+" ? a + b : a - b;
+    }
+    case "neg": { const v = needDefined(evalExpr(e.e, scope, ctx), ctx); return -(v instanceof PyFloat ? v.v : v); }
+    case "filter": return applyFilter(e.name, evalExpr(e.e, scope, ctx), e.args.map((a) => evalExpr(a, scope, ctx)), ctx);
+    default: throw new TemplateError("unsupported expression");
+  }
+}
+
+function applyFilter(name, v, args, ctx) {
+  switch (name) {
+    case "default": case "d": {
+      const dflt = args.length ? args[0] : "";
+      if (v instanceof Undef || (args[1] === true && !pyTruthy(v))) return dflt;
+      return v;
+    }
+    case "upper": return toText(v, ctx).toUpperCase();
+    case "lower": return toText(v, ctx).toLowerCase();
+    case "trim": return toText(v, ctx).trim();
+    case "string": return toText(v, ctx);
+    case "int": { const s = toText(v, ctx); const n = parseInt(s, 10); return Number.isNaN(n) ? (args.length ? args[0] : 0) : n; }
+    case "length": case "count": { v = needDefined(v, ctx); if (v instanceof Undef) return 0; return Array.isArray(v) || typeof v === "string" ? v.length : v instanceof Map ? v.size : Object.keys(v || {}).length; }
+    case "join": { const items = iterate(v, ctx); return items.map((x) => toText(x, ctx)).join(args.length ? pyStr(args[0]) : ""); }
+    case "replace": return toText(v, ctx).split(pyStr(args[0])).join(pyStr(args[1]));
+    case "first": { const items = iterate(v, ctx); return items.length ? items[0] : new Undef("first", "no first item", ctx); }
+    case "last": { const items = iterate(v, ctx); return items.length ? items[items.length - 1] : new Undef("last", "no last item", ctx); }
+    default: throw new TemplateError("no filter named " + pyRepr(name));
+  }
+}
+
+function truth(v, ctx) {
+  if (v instanceof Undef) {
+    if (ctx.lenient) return false;
+    v.fail();
+  }
+  return pyTruthy(v);
+}
+
+function toText(v, ctx) {
+  if (v instanceof Undef) {
+    if (ctx.lenient) { v.note(); return SKIP; }
+    v.fail();
+  }
+  return pyStr(v);
+}
+
+function iterate(v, ctx) {
+  if (v instanceof Undef) {
+    if (ctx.lenient) { v.note(); return []; }
+    v.fail();
+  }
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") return [...v];
+  if (v instanceof Map) return [...v.keys()];
+  if (v && typeof v === "object" && !(v instanceof PyFloat)) return Object.keys(v);
+  throw new TemplateError(pyRepr(typeName(v)) + " is not iterable");
+}
+
+function renderNodes(nodes, scope, ctx, out) {
+  for (const n of nodes) {
+    switch (n.k) {
+      case "text": out.push(n.v); break;
+      case "out": out.push(toText(evalExpr(n.e, scope, ctx), ctx)); break;
+      case "if": {
+        let done = false;
+        for (const b of n.branches) if (truth(evalExpr(b.cond, scope, ctx), ctx)) { renderNodes(b.body, scope, ctx, out); done = true; break; }
+        if (!done && n.other) renderNodes(n.other, scope, ctx, out);
+        break;
+      }
+      case "for": {
+        const items = iterate(evalExpr(n.iter, scope, ctx), ctx);
+        if (!items.length && n.other) { renderNodes(n.other, scope, ctx, out); break; }
+        items.forEach((item, i) => {
+          const s = { vars: new Map(), parent: scope };
+          if (n.vars.length === 1) s.vars.set(n.vars[0], item);
+          else n.vars.forEach((name, j) => s.vars.set(name, Array.isArray(item) ? item[j] : new Undef(name, null, ctx)));
+          s.vars.set("loop", { index: i + 1, index0: i, first: i === 0, last: i === items.length - 1, length: items.length, revindex: items.length - i, revindex0: items.length - i - 1 });
+          renderNodes(n.body, s, ctx, out);
+        });
+        break;
+      }
+      case "set": scope.vars.set(n.name, evalExpr(n.e, scope, ctx)); break;
+      case "include": {
+        const name = toText(evalExpr(n.e, scope, ctx), ctx);
+        const tpl = ctx.loader(name);
+        if (tpl === null) { if (n.ignore) break; throw new TemplateError(name); }
+        if (ctx.depth > 30) throw new TemplateError("include loop detected at " + name);
+        ctx.depth++;
+        renderNodes(compileTemplate(tpl, name, ctx), { vars: new Map(), parent: scope }, ctx, out);
+        ctx.depth--;
+        break;
+      }
+      default: break;
+    }
+  }
+}
+
+function compileTemplate(src, name, ctx) {
+  const key = name;
+  if (ctx.cache.has(key)) return ctx.cache.get(key);
+  const tree = buildTree(tokenizeTemplate(src.replace(/\r\n?/g, "\n"), name), name);
+  ctx.cache.set(key, tree);
+  return tree;
+}
+
+function renderTemplate(loader, name, vars, lenient) {
+  // Returns {text, seen}. Throws TemplateError / UndefinedError.
+  const ctx = { loader, lenient, seen: new Set(), cache: new Map(), depth: 0 };
+  const src = loader(name);
+  if (src === null) throw new TemplateError(name);
+  const scope = { vars: new Map(Object.entries(vars)), parent: null };
+  const out = [];
+  renderNodes(compileTemplate(src, name, ctx), scope, ctx, out);
+  return { text: out.join(""), seen: ctx.seen };
+}
+
+/* ---------------------------------------------------------------------------
+ * 5. generate.py port
+ * ------------------------------------------------------------------------- */
+const LINKS_COLS = {
+  "VRF": ["vrf"], "Subnet": ["subnet"], "DOT1Q": ["dot1q"], "Vlan": ["vlan"],
+  "DEVICE A": ["device a", "devicea"], "Device B": ["device b", "deviceb"],
+  "Port_A": ["port a", "porta", "a port", "interface a"], "Port_B": ["port b", "portb", "b port", "interface b"],
+  "IP_A": ["ip a", "ipa", "a ip"], "IP_B": ["ip b", "ipb", "b ip"],
+};
+const LINKS_REQUIRED = ["VRF", "Subnet", "DOT1Q", "DEVICE A", "Device B", "Port_A", "IP_A", "IP_B"];
+const LINKS_NOT_EMPTY = LINKS_REQUIRED.filter((k) => k !== "VRF");
+const GRT_VALUES = new Set(["", "grt", "global"]);
+const GRT_LABEL = "GRT";
+const PLAIN = { "port": "Port", "interface": "Port", "ip": "IP" };
+const VRFS_COLS = { "VRF": ["vrf"], "VPN ID": ["vpn id", "vpnid"] };
+const DEVICES_COLS = { "Device": ["device", "hostname"], "BGP AS": ["bgp as", "as", "asn", "bgp asn"], "Router ID": ["router id", "routerid"] };
+const GEN_COLS = {
+  "Device": ["device", "hostname"], "Generate": ["generate"], "OS": ["os", "os version", "platform"],
+  "VRF": ["vrf"], "Interfaces": ["interfaces", "interface"], "BGP": ["bgp"],
+  "Output name": ["output name", "output", "file name", "filename"],
+};
+const BLOCK_COLS = { vrf: "VRF", interfaces: "Interfaces", bgp: "BGP" };
+const YES = new Set(["", "yes", "y", "x", "oui", "o", "1", "true"]);
+const NO = new Set(["no", "n", "non", "0", "false"]);
+const OS_NAMES = { "ios xe": "ios-xe", "iosxe": "ios-xe", "xe": "ios-xe", "ios xr": "ios-xr", "iosxr": "ios-xr", "xr": "ios-xr" };
+
+class ExcelError extends Error {}
+
+function norm(text) {
+  // norm(): str(text or "") -> lower, trimmed, runs of space/_/- -> one space
+  const v = text instanceof PyFloat ? (text.v === 0 ? null : text) : text;
+  const s = pyTruthy(v) ? pyStr(v) : "";
+  return s.trim().toLowerCase().replace(/[\s_\-]+/g, " ");
+}
+
+function cellText(value) {
+  if (value === null || value === undefined) return "";
+  if (value instanceof PyFloat && Number.isInteger(value.v)) return String(value.v);
+  return pyStr(value).trim();
+}
+
+function mapHeaders(raw, spec) {
+  const mapping = new Map();
+  let side = null;
+  const lookup = {};
+  for (const [key, aliases] of Object.entries(spec)) for (const a of aliases) lookup[a] = key;
+  raw.forEach((cell, col) => {
+    const h = norm(cell);
+    if (!h) return;
+    let key = Object.prototype.hasOwnProperty.call(lookup, h) ? lookup[h] : null;
+    if (key === "DEVICE A" || key === "Device B") side = key === "DEVICE A" ? "A" : "B";
+    if (key === null && Object.prototype.hasOwnProperty.call(PLAIN, h) && "DEVICE A" in spec) {
+      if (side === null) {
+        throw new ExcelError(`column '${pyStr(cell)}' comes before any DEVICE A / Device B column, so it's unclear which side it belongs to. Rename it '${PLAIN[h]} A' or '${PLAIN[h]} B'.`);
+      }
+      key = `${PLAIN[h]}_${side}`;
+    }
+    if (key === null) return;
+    if ([...mapping.values()].includes(key)) {
+      throw new ExcelError(`two columns mean '${key.replace(/_/g, " ")}' (second one: '${pyStr(cell)}'). Rename one of them.`);
+    }
+    mapping.set(col, key);
+  });
+  return mapping;
+}
+
+function readSheet(wb, name, spec, required) {
+  const sheetName = wb.sheetnames.find((s) => norm(s) === norm(name));
+  if (sheetName === undefined) throw new ExcelError(`sheet '${name}' not found (sheets: ${wb.sheetnames.join(", ")})`);
+  const ws = wb.sheets[sheetName];
+  const rows = ws.rows.map((r) => r.slice());
+  for (const m of ws.merged) {
+    const value = ws.cell(m.r1, m.c1);
+    for (let r = m.r1; r <= Math.min(m.r2, rows.length); r++)
+      for (let c = m.c1; c <= m.c2; c++) if (c <= rows[r - 1].length) rows[r - 1][c - 1] = value;
+  }
+  let best = null, bestFound = -1, headerError = null;
+  for (let i = 0; i < Math.min(10, rows.length); i++) {
+    let mapping;
+    try { mapping = mapHeaders(rows[i], spec); }
+    catch (e) { if (!(e instanceof ExcelError)) throw e; headerError = headerError || e; continue; }
+    const vals = [...mapping.values()];
+    const found = required.filter((k) => vals.includes(k)).length;
+    if (found > bestFound) { best = [i, mapping]; bestFound = found; }
+    if (found === required.length) break;
+  }
+  if (best === null || (bestFound < required.length && headerError)) {
+    throw new ExcelError(`sheet '${ws.title}': ${headerError ? headerError.message : "empty"}`);
+  }
+  const [headerRow, mapping] = best;
+  const vals = [...mapping.values()];
+  const missing = required.filter((k) => !vals.includes(k)).map((k) => k.replace(/_/g, " "));
+  if (missing.length) {
+    const seen = rows[headerRow].filter((c) => pyTruthy(c));
+    throw new ExcelError(`sheet '${ws.title}': column(s) not found: ${missing.join(", ")}. Headers seen: [${seen.map(pyRepr).join(", ")}]`);
+  }
+  const out = [];
+  rows.slice(headerRow + 1).forEach((raw, k) => {
+    const excelRow = headerRow + 2 + k;
+    if (raw.every((v) => v === null || v === "")) return;
+    const row = {};
+    for (const key of Object.keys(spec)) row[key] = "";
+    row._row = excelRow;
+    for (const [col, key] of mapping) if (col < raw.length) row[key] = cellText(raw[col]);
+    out.push(row);
+  });
+  return out;
+}
+
+function yesNo(value, where, column) {
+  const v = norm(value);
+  if (YES.has(v)) return true;
+  if (NO.has(v)) return false;
+  throw new ExcelError(`${where}: ${column} must be yes or no, not '${value}'`);
+}
+
+function readGenerate(wb, hosts) {
+  const everything = () => ({ vrf: true, interfaces: true, bgp: true });
+  const allDevices = () => hosts.map((h) => ({ host: h, os: "ios-xe", blocks: everything(), output: h }));
+  if (!wb.sheetnames.some((s) => norm(s) === "generate")) return [allDevices(), null];
+  const rows = readSheet(wb, "Generate", GEN_COLS, ["Device"]);
+  if (!rows.length) return [allDevices(), "Generate sheet is empty: generating every device."];
+  const jobs = [], seen = new Set();
+  for (const r of rows) {
+    const where = `Generate row ${r._row} (${r.Device})`;
+    if (!r.Device) continue;
+    if (seen.has(r.Device)) throw new ExcelError(`${where}: device listed twice`);
+    seen.add(r.Device);
+    if (!yesNo(r.Generate, where, "Generate")) continue;
+    const osKey = norm(r.OS) || "ios xe";
+    const osName = Object.prototype.hasOwnProperty.call(OS_NAMES, osKey) ? OS_NAMES[osKey] : null;
+    if (osName === null) throw new ExcelError(`${where}: OS must be ios-xe or ios-xr, not '${r.OS}'`);
+    const blocks = {};
+    for (const [b, col] of Object.entries(BLOCK_COLS)) blocks[b] = yesNo(r[col], where, col);
+    if (!Object.values(blocks).some(Boolean)) throw new ExcelError(`${where}: VRF, Interfaces and BGP are all 'no'`);
+    jobs.push({ host: r.Device, os: osName, blocks, output: r["Output name"] || r.Device });
+  }
+  return [jobs, null];
+}
+
+function buildDevices(links, vpnIds, devices) {
+  const errors = [], data = new Map(), incomplete = new Map(), noDesc = [];
+  const usedSubifs = new Map();
+
+  function addSide(host, port, ipLocal, ipPeer, peer, peerPort, vrf, dot1q, net, where) {
+    const key = JSON.stringify([host, port, dot1q]);
+    if (usedSubifs.has(key)) { errors.push(`${where}: ${port}.${dot1q} already used on ${host} (${usedSubifs.get(key)})`); return; }
+    usedSubifs.set(key, where);
+    if (!data.has(host)) {
+      data.set(host, { local_as: devices.get(host).as, vrfs: [], subinterfaces: [], bgp_vrfs: [], bgp_global: [], grt_label: GRT_LABEL });
+    }
+    const d = data.get(host);
+    if (devices.get(host).router_id) d.router_id = devices.get(host).router_id;
+    const label = vrf || GRT_LABEL;
+    if (vrf && !d.vrfs.some((v) => v.name === vrf)) d.vrfs.push({ name: vrf, vpn_id: vpnIds.get(vrf) });
+    d.subinterfaces.push({
+      name: port,
+      description: peerPort ? `# ${peer} - ${peerPort}.${dot1q} - ( ${label} ) #` : "",
+      dot1q, vrf, ip: String(ipLocal), mask: String(net.netmask),
+    });
+    const neighbor = {
+      ip: String(ipPeer), remote_as: devices.get(peer).as, device_b: peer,
+      description: vrf ? `${peer}-(vrf ${vrf})` : `${peer}-(${GRT_LABEL})`,
+    };
+    if (!vrf) { d.bgp_global.push(neighbor); return; }
+    let af = d.bgp_vrfs.find((a) => a.vrf === vrf);
+    if (!af) { af = { vrf, vpn_id: vpnIds.get(vrf), neighbors: [] }; d.bgp_vrfs.push(af); }
+    af.neighbors.push(neighbor);
+  }
+
+  for (const r of links) {
+    const where = `Links row ${r._row}`;
+    const before = errors.length;
+    const hostA = r["DEVICE A"], hostB = r["Device B"];
+    let vrf = r.VRF;
+    const dot1q = r.DOT1Q;
+    if (GRT_VALUES.has(norm(vrf))) vrf = "";
+    const empty = LINKS_NOT_EMPTY.filter((k) => !r[k]).map((k) => k.replace(/_/g, " "));
+    if (empty.length) { errors.push(`${where}: empty cell(s): ${empty.join(", ")}`); continue; }
+    let net, ipA, ipB;
+    try {
+      net = ipNetwork(r.Subnet, true);
+      ipA = ipAddress(r.IP_A);
+      ipB = ipAddress(r.IP_B);
+    } catch (e) { errors.push(`${where}: ${e.message}`); continue; }
+    for (const [label, ip] of [["IP A", ipA], ["IP B", ipB]]) if (!net.contains(ip)) errors.push(`${where}: ${label} ${ip} is not in ${net}`);
+    if (ipA.equals(ipB)) errors.push(`${where}: IP A and IP B are both ${ipA}`);
+    if (hostA === hostB) errors.push(`${where}: DEVICE A and Device B are both ${hostA}`);
+    for (const dev of [hostA, hostB]) if (!devices.has(dev)) errors.push(`${where}: device '${dev}' missing in Devices sheet`);
+    if (vrf && !vpnIds.has(vrf)) errors.push(`${where}: VRF '${vrf}' missing in VRFs sheet`);
+    if (!/^[0-9]+$/.test(dot1q) || !(parseInt(dot1q, 10) >= 1 && parseInt(dot1q, 10) <= 4094)) errors.push(`${where}: DOT1Q '${dot1q}' must be 1-4094`);
+    if (errors.length > before) continue;
+    addSide(hostA, r.Port_A, ipA, ipB, hostB, r.Port_B, vrf, dot1q, net, where);
+    if (r.Port_B) addSide(hostB, r.Port_B, ipB, ipA, hostA, r.Port_A, vrf, dot1q, net, where);
+    else {
+      noDesc.push(`${hostA} ${r.Port_A}.${dot1q} (row ${r._row})`);
+      if (!incomplete.has(hostB)) incomplete.set(hostB, []);
+      incomplete.get(hostB).push(r._row);
+    }
+  }
+  for (const host of incomplete.keys()) data.delete(host);
+  return [data, errors, incomplete, noDesc];
+}
+
+function findVariantLoops(templateFiles) {
+  const rx = /{%-?\s*for\s+\w+\s+in\s+(?:\w+\.)?(\w+_\d+)\b/g;
+  const found = new Set();
+  for (const [name, text] of Object.entries(templateFiles)) {
+    if (!name.endsWith(".j2")) continue;
+    for (const m of text.matchAll(rx)) found.add(m[1]);
+  }
+  return [...found].sort();
+}
+
+/**
+ * generate_configs(wb, templates, strict)
+ *   wb:        workbook from readWorkbook()
+ *   std:       {"ios-xe": {file: text}, "ios-xr": {...}} standard templates
+ *   custom:    null, or {name: "folder name", files: {file: text}} (drafts)
+ *   strict:    with custom templates, fail on a missing value
+ * Returns a Result-like object: {error_title, errors, notes, configs, failed, skipped, ok}
+ */
+function generateConfigs(wb, std, custom = null, strict = false) {
+  const res = { error_title: "", errors: [], notes: [], configs: [], failed: [], skipped: [] };
+  const stop = (title, errors) => { res.error_title = title; res.errors = [...errors]; return finish(res); };
+  const tplFiles = (os) => (custom ? custom.files : std[os] || {});
+  const tplDirName = (os) => (custom ? custom.name : "templates/" + os);
+
+  let links, vpnIds, devices;
+  try {
+    links = readSheet(wb, "Links", LINKS_COLS, LINKS_REQUIRED);
+    vpnIds = new Map(readSheet(wb, "VRFs", VRFS_COLS, ["VRF", "VPN ID"]).map((r) => [r.VRF, r["VPN ID"]]));
+    devices = new Map(readSheet(wb, "Devices", DEVICES_COLS, ["Device", "BGP AS"]).map((r) => [r.Device, { as: r["BGP AS"], router_id: r["Router ID"] }]));
+  } catch (e) {
+    if (e instanceof ExcelError) return stop("The Excel file has a structure problem:", [e.message]);
+    throw e;
+  }
+  const [data, errors, incomplete, noDesc] = buildDevices(links, vpnIds, devices);
+  if (errors.length) return stop("Fix these errors in the Excel file first:", errors);
+  if (!data.size && !incomplete.size) return stop("Nothing to generate:", ["No links found in the Links sheet."]);
+  if (noDesc.length) res.notes.push("No interface description for these sub-interfaces, because Port B (the facing interface) is empty: " + noDesc.join("; "));
+
+  let jobs, note;
+  try { [jobs, note] = readGenerate(wb, [...data.keys()]); }
+  catch (e) {
+    if (e instanceof ExcelError) return stop("The Generate sheet has a problem:", [e.message]);
+    throw e;
+  }
+  if (note) res.notes.push(note);
+
+  const problems = [], outputs = new Map();
+  for (const job of jobs) {
+    if (incomplete.has(job.host)) {
+      problems.push(`${job.host}: is Device B with an empty Port B (Links row(s) ${incomplete.get(job.host).join(", ")})`);
+    } else if (!data.has(job.host)) {
+      problems.push(`${job.host}: not found as DEVICE A or Device B in the Links sheet`);
+    } else if (!Object.prototype.hasOwnProperty.call(tplFiles(job.os), "main.j2")) {
+      const what = custom ? `in ${tplDirName(job.os)}` : `for ${job.os}`;
+      problems.push(`${job.host}: no main.j2 ${what} (expected ${tplDirName(job.os)}/main.j2)`);
+    }
+    if (outputs.has(job.output)) problems.push(`${job.host}: output name '${job.output}' already used by ${outputs.get(job.output)}`);
+    outputs.set(job.output, job.host);
+  }
+  if (problems.length) return stop("Nothing generated. Fix these first:", problems);
+  if (!jobs.length) return stop("Nothing to generate:", ["No device has Generate = yes in the Generate sheet."]);
+
+  const lenient = Boolean(custom) && !strict;
+  if (lenient) {
+    const variants = findVariantLoops(custom.files);
+    if (variants.length) {
+      res.notes.push(`These loops are variants and stay empty: ${variants.join(", ")}. Excel rows are rendered with the structure of the first loop (e.g. bgp_vrfs, not bgp_vrfs_2). Check the result, or merge the variants in the draft.`);
+    }
+  }
+
+  for (const job of jobs) {
+    const files = tplFiles(job.os);
+    const disabled = new Set(Object.entries(job.blocks).filter(([, on]) => !on).map(([b]) => b + ".j2"));
+    const loader = (name) => (disabled.has(name) ? "" : Object.prototype.hasOwnProperty.call(files, name) ? files[name] : null);
+    const d = data.get(job.host);
+    let text, seen;
+    try {
+      ({ text, seen } = renderTemplate(loader, "main.j2", { blocks: job.blocks, ...d }, lenient));
+      if (lenient) text = text.split("\n").filter((l) => !l.includes(SKIP)).join("\n");
+    } catch (e) {
+      if (e instanceof UndefinedError) {
+        res.failed.push({ host: job.host, lines: [
+          `${job.host}: the templates in ${tplDirName(job.os)} use a variable the Excel data doesn't provide: ${e.message}`,
+          "  Available: local_as, router_id (if filled), blocks.vrf/interfaces/bgp,",
+          "    vrfs[].name/vpn_id, subinterfaces[].name/dot1q/vrf/ip/mask/description,",
+          "    bgp_vrfs[].vrf/vpn_id, bgp_vrfs[].neighbors[].ip/remote_as/device_b/description,",
+          "    bgp_global[].ip/remote_as/device_b/description, grt_label",
+          "  Untick \"Stop on values missing from Excel\" to leave out what the Excel doesn't provide."] });
+        continue;
+      }
+      if (e instanceof TemplateError) {
+        res.failed.push({ host: job.host, lines: [`${job.host}: template error in ${tplDirName(job.os)}: ${e.message}`] });
+        continue;
+      }
+      throw e;
+    }
+    res.configs.push({
+      host: job.host, os: job.os, blocks: job.blocks, output: job.output,
+      source: custom ? custom.name : job.os, text, data: d,
+      left_out: lenient ? [...seen].sort() : [],
+    });
+  }
+  const selected = new Set(jobs.map((j) => j.host));
+  const skipped = [...data.keys()].filter((h) => !selected.has(h));
+  if (skipped.length) res.skipped.push(`Not selected in the Generate sheet: ${skipped.join(", ")}`);
+  const noPort = [...incomplete.keys()].filter((h) => !selected.has(h));
+  if (noPort.length) res.skipped.push("Port B empty, so the Device B side can't be built: " + noPort.map((h) => `${h} (row ${incomplete.get(h).join(", ")})`).join(", "));
+  return finish(res);
+}
+
+function finish(res) {
+  res.ok = !res.errors.length && !res.failed.length;
+  return res;
+}
+
+/* ---------------------------------------------------------------------------
+ * 6. dns_names.py port
+ * ------------------------------------------------------------------------- */
+const DEFAULT_ABBREVIATIONS = [
+  ["TenGigabitEthernet", "Te"], ["TenGigE", "Te"],
+  ["TwentyFiveGigabitEthernet", "Twe"], ["TwentyFiveGigE", "Twe"],
+  ["FortyGigabitEthernet", "Fo"], ["FortyGigE", "Fo"],
+  ["HundredGigabitEthernet", "Hu"], ["HundredGigE", "Hu"],
+  ["GigabitEthernet", "Gi"], ["FastEthernet", "Fa"],
+  ["Ethernet", "Et"], ["Loopback", "Lo"], ["Vlan", "Vl"],
+  ["Tunnel", "Tu"], ["Port-channel", "Po"], ["Bundle-Ether", "BE"],
+  ["MgmtEth", "Mg"],
+];
+const STATUS = {
+  OK: "OK", SHUTDOWN: "shutdown", SECONDARY: "secondary", DUP_NAME: "duplicate name",
+  DUP_IP: "duplicate IP", TOO_LONG: "name too long", DOT1Q: "dot1q \u2260 sub-interface number",
+  UNKNOWN_TYPE: "unknown interface type",
+};
+const NOT_A_RECORD = "(not a record)";
+const TABLE_COLUMNS = ["FQDN", "IPv4 address", "Device", "Interface", "dot1q", "VRF", "Status"];
+
+function decodeText(bytes) {
+  // read_text_file(): UTF-8 (with or without BOM), else Windows cp1252
+  try {
+    let s = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (s.charCodeAt(0) === 0xfeff) s = s.slice(1);
+    return s;
+  } catch (e) {
+    return new TextDecoder("windows-1252").decode(bytes);
+  }
+}
+
+const PY_WS = /^[\s\u001c-\u001f\u0085]+|[\s\u001c-\u001f\u0085]+$/g;
+const pyStrip = (s) => s.replace(PY_WS, "");
+
+function parseConfig(text, source = "") {
+  // parse_config(): only hostname, interfaces, addresses, VRF, dot1q, shutdown are kept
+  const result = { source, hostname: null, platform: "unknown", interfaces: [], problems: [] };
+  let current = null, bannerEnd = null, xr = false;
+  const lines = text.split(/\r\n|[\n\r\v\f\u001c\u001d\u001e\u0085\u2028\u2029]/);
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  lines.forEach((line, idx) => {
+    const number = idx + 1;
+    if (bannerEnd !== null) { if (line.includes(bannerEnd)) bannerEnd = null; return; }
+    const stripped = pyStrip(line);
+    if (!stripped || stripped.startsWith("!")) return;
+    const banner = /^banner\s+\S+\s+([\s\S]+)/i.exec(stripped);
+    if (banner) {
+      const payload = banner[1];
+      const delimiter = payload.startsWith("^C") ? "^C" : payload[0];
+      if (!payload.slice(delimiter.length).includes(delimiter)) bannerEnd = delimiter;
+      current = null;
+      return;
+    }
+    if (!/\s/.test(line[0])) {
+      current = null;
+      const host = /^hostname\s+(\S+)$/i.exec(stripped);
+      if (host && result.hostname === null) result.hostname = host[1];
+      const intf = /^interface\s+(\S+)$/i.exec(stripped);
+      if (intf) {
+        current = { name: intf[1], addresses: [], shutdown: false, vrf: "", dot1q: null, line_no: number };
+        result.interfaces.push(current);
+        xr = xr || /\d+\/\d+\/\d+\/\d+/.test(current.name);
+      }
+      return;
+    }
+    if (current === null) return;
+    if (/^ipv4\s+address\b/i.test(stripped)) xr = true;
+    const low = stripped.toLowerCase();
+    if (low === "shutdown" || low === "no shutdown") current.shutdown = low === "shutdown";
+    const vrf = /^vrf\s+(?:forwarding\s+)?(\S+)$/i.exec(stripped);
+    if (vrf) current.vrf = vrf[1];
+    const encap = /^encapsulation\s+dot1q\s+(\d+)\b/i.exec(stripped);
+    if (encap) current.dot1q = encap[1];
+    const address = /^(ip|ipv4)\s+address\s+(\S+)(?:\s+(\S+))?(?:\s+(secondary))?$/i.exec(stripped);
+    if (!address) return;
+    const [, family, value, mask, secondary] = address;
+    try {
+      let parsed, isSecondary;
+      if (value.includes("/") && family.toLowerCase() === "ipv4") {
+        if (mask && mask.toLowerCase() !== "secondary") return;
+        parsed = ipv4Interface(value);
+        isSecondary = Boolean(secondary || mask);
+      } else {
+        if (!mask) return;
+        parsed = ipv4Interface(value + "/" + mask);
+        isSecondary = Boolean(secondary);
+      }
+      current.addresses.push({ ip: parsed.ip, prefix_len: parsed.prefix, secondary: isSecondary });
+    } catch (e) { /* invalid address: ignored */ }
+  });
+  result.platform = xr ? "IOS-XR" : result.interfaces.length ? "IOS-XE" : "unknown";
+  if (result.hostname === null) result.problems.push("no hostname line");
+  return result;
+}
+
+function shortInterfaceName(name, abbreviations) {
+  // short_interface_name() -> [short, sub-interface number, known type]
+  const sub = /\.(\d+)$/.exec(name);
+  let base = sub ? name.slice(0, sub.index) : name;
+  const token = /^[A-Za-z]+(?:-[A-Za-z]+)*/.exec(base);
+  const kind = token ? token[0] : "";
+  let known = false;
+  const byLong = [...abbreviations].sort((a, b) => b[0].length - a[0].length);
+  for (const [longName, shortName] of byLong) {
+    if (kind.toLowerCase() === longName.toLowerCase()) { base = shortName + base.slice(kind.length); known = true; break; }
+  }
+  if (!known) {
+    const byShort = [...abbreviations].sort((a, b) => b[1].length - a[1].length);
+    for (const [, shortName] of byShort) {
+      if (kind.toLowerCase() === shortName.toLowerCase()) { base = shortName + base.slice(kind.length); known = true; break; }
+    }
+  }
+  return [base.replace(/[^A-Za-z0-9-]/g, "-"), sub ? sub[1] : "", known];
+}
+
+function markDuplicates(records) {
+  const names = new Map(), ips = new Map();
+  for (const r of records) {
+    if (r.is_record && r.fqdn) { const k = r.fqdn.toLowerCase(); if (!names.has(k)) names.set(k, []); names.get(k).push(r); }
+    if (r.ip) { if (!ips.has(r.ip)) ips.set(r.ip, []); ips.get(r.ip).push(r); }
+  }
+  for (const [groups, warning] of [[names, STATUS.DUP_NAME], [ips, STATUS.DUP_IP]]) {
+    for (const group of groups.values()) {
+      if (group.length > 1) for (const r of group) if (!r.warnings.includes(warning)) r.warnings.push(warning);
+    }
+  }
+}
+
+function defaultDnsSettings() {
+  return { domain: "win.net.intra", include_secondary: false, exclude_shutdown: false, lowercase: false,
+           abbreviations: DEFAULT_ABBREVIATIONS.map((p) => p.slice()) };
+}
+
+function buildRecords(files, settings) {
+  settings = settings || defaultDnsSettings();
+  const result = { records: [], files: [...files], problems: [] };
+  for (const loaded of result.files) {
+    for (const p of loaded.problems) result.problems.push((loaded.source ? loaded.source + ": " : "") + p);
+    if (!loaded.hostname) { if (!loaded.problems.length) result.problems.push("no hostname line"); continue; }
+    for (const intf of loaded.interfaces) {
+      if (intf.shutdown && settings.exclude_shutdown) continue;
+      const [short, sub, known] = shortInterfaceName(intf.name, settings.abbreviations);
+      const dot1q = sub ? (intf.dot1q || sub) : "";
+      const label = loaded.hostname + "_" + short + (dot1q ? "_" + dot1q : "");
+      let secondaryNumber = 0;
+      for (const address of intf.addresses) {
+        const warnings = [];
+        if (intf.shutdown) warnings.push(STATUS.SHUTDOWN);
+        if (address.secondary) { secondaryNumber++; warnings.push(STATUS.SECONDARY); }
+        if (!known) warnings.push(STATUS.UNKNOWN_TYPE);
+        if (sub && intf.dot1q && parseInt(sub, 10) !== parseInt(intf.dot1q, 10)) warnings.push(STATUS.DOT1Q);
+        const isRecord = !address.secondary || settings.include_secondary;
+        const suffix = address.secondary ? "-sec" + secondaryNumber : "";
+        let fqdn = isRecord ? label + suffix + "." + settings.domain : "";
+        if (settings.lowercase) fqdn = fqdn.toLowerCase();
+        if (fqdn.split(".").some((part) => part.length > 63)) warnings.push(STATUS.TOO_LONG);
+        result.records.push({ fqdn, ip: address.ip, device: loaded.hostname, interface: intf.name, dot1q,
+                              vrf: intf.vrf, warnings, is_record: isRecord, source: loaded.source });
+      }
+    }
+  }
+  markDuplicates(result.records);
+  return result;
+}
+
+const recordStatus = (r) => (r.warnings.length ? r.warnings.join("; ") : STATUS.OK);
+const recordRow = (r) => [r.fqdn || NOT_A_RECORD, r.ip, r.device, r.interface, r.dot1q, r.vrf, recordStatus(r)];
+
+function summaryText(result) {
+  const devices = new Set(result.files.filter((f) => f.hostname).map((f) => f.hostname));
+  return `${result.records.filter((r) => r.is_record).length} records from ${devices.size} devices, ${result.records.filter((r) => r.warnings.length).length} warnings`;
+}
+
+function tableSortKey(columnIndex, value) {
+  // table_sort_key(): IPs and dot1q sort as numbers
+  if (columnIndex === 1 || columnIndex === 4) {
+    if (columnIndex === 1) { const n = parseV4(value); return n === null ? [1, 0] : [0, Number(n)]; }
+    return /^\s*[+-]?\d+\s*$/.test(value) ? [0, parseInt(value, 10)] : [1, 0];
+  }
+  return [0, value.toLowerCase()];
+}
+
+function compareKeys(a, b) {
+  for (let i = 0; i < a.length; i++) { if (a[i] < b[i]) return -1; if (a[i] > b[i]) return 1; }
+  return 0;
+}
+
+function csvField(v) {
+  return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+
+function toCsv(records) {
+  // to_csv_bytes() without the BOM (added when saving)
+  const rows = [TABLE_COLUMNS, ...records.map(recordRow)];
+  return rows.map((row) => row.map(csvField).join(",") + "\r\n").join("");
+}
+
+const singleLine = (v) => v.replace(/[\t\r\n]/g, " ");
+
+function toTsv(records, header = true) {
+  const rows = header ? [TABLE_COLUMNS] : [];
+  rows.push(...records.map(recordRow));
+  return rows.map((row) => row.map(singleLine).join("\t") + "\n").join("");
+}
+
+function psQuote(value) {
+  value = value.replace(/`/g, "``").replace(/\$/g, "`$").replace(/"/g, '`"');
+  return '"' + value.replace(/\r/g, "`r").replace(/\n/g, "`n") + '"';
+}
+
+function toPowershell(records, domain) {
+  const lines = [];
+  for (const r of records) {
+    if (!r.is_record) continue;
+    const suffix = "." + domain;
+    const name = r.fqdn.toLowerCase().endsWith(suffix.toLowerCase()) ? r.fqdn.slice(0, -suffix.length) : r.fqdn;
+    let line = `Add-DnsServerResourceRecordA -ZoneName ${psQuote(domain)} -Name ${psQuote(name)} -IPv4Address ${psQuote(r.ip)} -CreatePtr`;
+    if (r.warnings.length) line = "# " + line + "  # " + singleLine(recordStatus(r));
+    lines.push(line);
+  }
+  return lines.map((l) => l + "\r\n").join("");
+}
+
+/* ---------------------------------------------------------------------------
+ * 7. ZIP writer (Save all as one .zip when the browser can't write a folder)
+ * ------------------------------------------------------------------------- */
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(bytes) { let c = 0xffffffff; for (const b of bytes) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+
+function makeZip(files) {
+  // files: [{name, bytes}] -> Uint8Array (stored, no compression)
+  const enc = new TextEncoder(), parts = [], central = [];
+  let offset = 0;
+  const now = new Date();
+  const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+  const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  for (const f of files) {
+    const name = enc.encode(f.name), crc = crc32(f.bytes), size = f.bytes.length;
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true);
+    lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true); lh.setUint32(14, crc, true);
+    lh.setUint32(18, size, true); lh.setUint32(22, size, true); lh.setUint16(26, name.length, true);
+    parts.push(new Uint8Array(lh.buffer), name, f.bytes);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true);
+    ch.setUint16(12, dosTime, true); ch.setUint16(14, dosDate, true); ch.setUint32(16, crc, true);
+    ch.setUint32(20, size, true); ch.setUint32(24, size, true); ch.setUint16(28, name.length, true); ch.setUint32(42, offset, true);
+    central.push(new Uint8Array(ch.buffer), name);
+    offset += 30 + name.length + size;
+  }
+  const cdSize = central.reduce((s, p) => s + p.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+  end.setUint32(12, cdSize, true); end.setUint32(16, offset, true);
+  const all = [...parts, ...central, new Uint8Array(end.buffer)];
+  const out = new Uint8Array(all.reduce((s, p) => s + p.length, 0));
+  let o = 0;
+  for (const p of all) { out.set(p, o); o += p.length; }
+  return out;
+}
+
+if (typeof module !== "undefined") {
+  module.exports = { readWorkbook, generateConfigs, renderTemplate, parseConfig, buildRecords, shortInterfaceName,
+    defaultDnsSettings, summaryText, recordRow, toCsv, toTsv, toPowershell, tableSortKey, compareKeys, decodeText,
+    ipNetwork, ipAddress, makeZip, unzip, pyFloatStr, PyFloat, norm, cellText, STATUS, TABLE_COLUMNS };
+}
+/* ENGINE END ================================================================ */
+
+</script>
+<script>
+/* UI START ===================================================================
+ * Network Config Tools — interface. All texts are in TEXT (translate here).
+ * Nothing is sent anywhere; files are written only by the Save / Export buttons.
+ * ========================================================================== */
+"use strict";
+
+const TEXT = {
+  appTitle: "Network Config Tools",
+  tabGen: "Config generator",
+  tabDns: "DNS names",
+  offline: "Offline: nothing leaves this page",
+  themeTitle: "Switch light / dark",
+  themeDark: "Dark",
+  themeLight: "Light",
+  inputs: "Inputs",
+  excelFile: "Excel file",
+  browse: "Browse…",
+  clear: "Clear",
+  clearAll: "Clear",
+  dropExcel: "or drop the .xlsx file here",
+  noExcel: "No file chosen",
+  tplFolder: "Template folder (optional)",
+  stdTemplates: "Standard templates",
+  strict: "Stop on values missing from Excel",
+  generate: "Generate",
+  genHint: "Ctrl+Enter generates again. The Excel file is re-read each time, so you can edit it and generate again.",
+  genEmptyTitle: "Choose an Excel file to start",
+  genEmptyText: "Pick netgen_input.xlsx (or your own copy), then Generate. Each selected device gets its configuration here.",
+  nGenerated: (n) => `${n} configuration${n === 1 ? "" : "s"} generated`,
+  copy: "Copy",
+  saveCfg: "Save .cfg…",
+  saveAll: "Save all…",
+  leftOut: "Left out because the Excel file has no value for: ",
+  failed: "Failed",
+  notGenerated: "Not generated",
+  copied: (f) => `Copied ${f}`,
+  saved: (f) => `Saved ${f}`,
+  savedAll: (n, where) => `Saved ${n} file${n === 1 ? "" : "s"} ${where}`,
+  existTitle: "These files already exist in the folder. Overwrite them?",
+  overwrite: "Overwrite",
+  cancel: "Cancel",
+  cancelled: "Nothing saved",
+  reread: "The Excel file changed on disk and this browser can't re-read it on its own: click Browse… and pick it again.",
+  readError: (m) => `Can't read this file: ${m}`,
+  tplLoaded: (name, n) => `${name} (${n} template${n === 1 ? "" : "s"})`,
+  noJ2: "This folder has no .j2 file.",
+  sources: "Running-configs",
+  addFiles: "Add files…",
+  addFolder: "Add folder…",
+  dropConfigs: "or drop running-config files here",
+  pasteLabel: "Or paste one running-config",
+  naming: "Naming",
+  domain: "Domain",
+  optSecondary: "Give secondary addresses a record (-sec1, -sec2…)",
+  optShutdown: "Leave out shutdown interfaces",
+  optLower: "All lower case",
+  abbrTitle: "Interface abbreviations",
+  abbrAdd: "Add a row",
+  abbrReset: "Restore defaults",
+  abbrType: "Type in the config",
+  abbrShort: "Abbreviation",
+  dnsGenerate: "Generate DNS names",
+  dnsEmptyTitle: "Add running-configs to start",
+  dnsEmptyText: "Add files or a folder, or paste a config, then Generate DNS names. Only hostnames, interfaces and addresses are read.",
+  pasted: "pasted text",
+  noSource: "Add at least one running-config, or paste one.",
+  exportCsv: "Export CSV…",
+  exportPs: "Export PowerShell…",
+  copyTable: "Copy table",
+  tableCopied: (n) => `Copied ${n} rows`,
+  problems: "Some files were skipped:",
+  skippedBig: (f) => `${f}: skipped (larger than 5 MB or not a text file)`,
+  footer: "Files are written only when you click Save or Export.",
+};
+
+/* ---------------------------------------------------------------------------- */
+const $ = (id) => document.getElementById(id);
+const el = (tag, attrs = {}, ...kids) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (k === "text") e.textContent = v;
+    else e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const k of kids.flat()) if (k !== null && k !== undefined && k !== false) e.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  return e;
+};
+document.querySelectorAll("[data-t]").forEach((n) => { n.textContent = TEXT[n.dataset.t]; });
+document.querySelectorAll("[data-t-title]").forEach((n) => { n.title = TEXT[n.dataset.tTitle]; });
+
+/* Preferences (UI settings only — never configurations, IPs or hostnames) ------ */
+const PREFS_KEY = "netgen-tools-prefs";
+function loadPrefs() { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch (e) { return {}; } }
+function savePrefs(p) { try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch (e) { /* storage unavailable */ } }
+const prefs = loadPrefs();
+
+/* Status bar --------------------------------------------------------------------- */
+let statusTimer = null;
+function status(msg) {
+  const s = $("status");
+  s.textContent = msg;
+  s.classList.add("flash");
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => s.classList.remove("flash"), 1500);
+}
+
+/* Theme and tabs ------------------------------------------------------------------ */
+function setTheme(t) { document.documentElement.dataset.theme = t; prefs.theme = t; savePrefs(prefs); $("theme").textContent = t === "dark" ? TEXT.themeLight : TEXT.themeDark; }
+setTheme(prefs.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+$("theme").onclick = () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+function showTab(which) {
+  for (const t of ["gen", "dns"]) {
+    $("tab-" + t).classList.toggle("active", t === which);
+    $("tab-btn-" + t).setAttribute("aria-selected", String(t === which));
+  }
+  prefs.tab = which; savePrefs(prefs);
+}
+$("tab-btn-gen").onclick = () => showTab("gen");
+$("tab-btn-dns").onclick = () => showTab("dns");
+showTab(prefs.tab === "dns" ? "dns" : "gen");
+
+/* Saving files (only on explicit clicks) ------------------------------------------ */
+async function saveFile(name, bytes, mime, ext) {
+  // Native save dialog when the browser has one, otherwise a normal download.
+  if (window.showSaveFilePicker) {
+    let handle;
+    try {
+      handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: ext, accept: { [mime]: ["." + ext] } }] });
+    } catch (e) { if (e.name === "AbortError") return false; handle = null; }
+    if (handle) {
+      const w = await handle.createWritable();
+      await w.write(bytes);
+      await w.close();
+      return handle.name;
+    }
+  }
+  const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  const a = el("a", { href: url, download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  return name;
+}
+
+function confirmList(text, items) {
+  return new Promise((resolve) => {
+    const d = $("confirm");
+    $("confirm-text").textContent = text;
+    $("confirm-list").textContent = items.join("\n");
+    $("confirm-yes").onclick = () => { d.close(); resolve(true); };
+    $("confirm-no").onclick = () => { d.close(); resolve(false); };
+    d.oncancel = () => resolve(false);
+    d.showModal();
+  });
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch (e) {
+    const ta = el("textarea", { style: "position:fixed;left:-9999px" });
+    ta.value = text; document.body.append(ta); ta.select();
+    const ok = document.execCommand("copy"); ta.remove(); return ok;
+  }
+}
+
+function busy(btn, on) { btn.classList.toggle("busy", on); btn.disabled = on; }
+const nextFrame = () => new Promise((r) => setTimeout(r, 0));
+const utf8 = (s) => new TextEncoder().encode(s);
+const withBom = (s) => { const b = utf8(s); const out = new Uint8Array(b.length + 3); out.set([0xef, 0xbb, 0xbf]); out.set(b, 3); return out; };
+
+/* =============================================================================
+ * Tab 1 — Config generator
+ * ========================================================================== */
+const STD = JSON.parse($("std-templates").textContent);
+const gen = { xlsxHandle: null, xlsxFile: null, xlsxName: "", tplHandle: null, tplFiles: null, tplName: "", res: null, selected: null };
+
+function setPath(id, text) { const p = $(id); p.textContent = text || ""; p.classList.toggle("empty", !text); p.title = text || ""; }
+setPath("xlsx-path", ""); $("xlsx-path").textContent = TEXT.noExcel;
+setPath("tpl-path", ""); $("tpl-path").textContent = TEXT.stdTemplates;
+
+function setExcel(handle, file) {
+  gen.xlsxHandle = handle; gen.xlsxFile = file;
+  gen.xlsxName = (handle || file).name;
+  setPath("xlsx-path", gen.xlsxName);
+  $("gen-run").disabled = false;
+}
+
+$("xlsx-browse").onclick = async () => {
+  if (window.showOpenFilePicker) {
+    try {
+      const [h] = await window.showOpenFilePicker({ types: [{ description: "Excel", accept: { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx", ".xlsm"] } }] });
+      setExcel(h, null); runGenerate(); return;
+    } catch (e) { if (e.name === "AbortError") return; }
+  }
+  $("xlsx-input").click();
+};
+$("xlsx-input").onchange = (e) => { const f = e.target.files[0]; if (f) { setExcel(null, f); runGenerate(); } e.target.value = ""; };
+
+function dropZone(zone, onItems) {
+  zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("over"); });
+  zone.addEventListener("dragleave", () => zone.classList.remove("over"));
+  zone.addEventListener("drop", async (e) => {
+    e.preventDefault(); zone.classList.remove("over");
+    const items = [...e.dataTransfer.items].filter((i) => i.kind === "file");
+    const handles = [];
+    for (const it of items) {
+      const h = it.getAsFileSystemHandle ? await it.getAsFileSystemHandle().catch(() => null) : null;
+      handles.push({ handle: h, file: it.getAsFile() });
+    }
+    onItems(handles);
+  });
+}
+dropZone($("xlsx-drop"), (items) => {
+  const it = items.find((i) => /\.xls[xm]$/i.test((i.file || i.handle || {}).name || ""));
+  if (it) { setExcel(it.handle && it.handle.kind === "file" ? it.handle : null, it.file); runGenerate(); }
+});
+
+async function readExcelBytes() {
+  if (gen.xlsxHandle) return new Uint8Array(await (await gen.xlsxHandle.getFile()).arrayBuffer()); // fresh from disk
+  try { return new Uint8Array(await gen.xlsxFile.arrayBuffer()); }
+  catch (e) { throw new Error(TEXT.reread); }
+}
+
+/* Template folder */
+async function readTemplateDir() {
+  if (gen.tplHandle) {
+    const files = {};
+    for await (const [name, h] of gen.tplHandle.entries()) if (h.kind === "file" && name.endsWith(".j2")) files[name] = await (await h.getFile()).text();
+    return files;
+  }
+  return gen.tplFiles;
+}
+function setTemplates(name, n) {
+  setPath("tpl-path", TEXT.tplLoaded(name, n));
+  $("tpl-clear").disabled = false;
+  $("strict").disabled = false; $("strict-wrap").classList.remove("disabled");
+}
+$("tpl-browse").onclick = async () => {
+  if (window.showDirectoryPicker) {
+    try {
+      const h = await window.showDirectoryPicker();
+      gen.tplHandle = h; gen.tplFiles = null; gen.tplName = h.name;
+      const files = await readTemplateDir();
+      if (!Object.keys(files).length) { status(TEXT.noJ2); gen.tplHandle = null; return; }
+      setTemplates(h.name, Object.keys(files).length);
+      if (gen.res) runGenerate();
+      return;
+    } catch (e) { if (e.name === "AbortError") return; }
+  }
+  $("tpl-input").click();
+};
+$("tpl-input").onchange = async (e) => {
+  const files = {};
+  let folder = "";
+  for (const f of e.target.files) {
+    const parts = (f.webkitRelativePath || f.name).split("/");
+    folder = parts[0];
+    if (parts.length === 2 && f.name.endsWith(".j2")) files[f.name] = await f.text();
+  }
+  e.target.value = "";
+  if (!Object.keys(files).length) { status(TEXT.noJ2); return; }
+  gen.tplHandle = null; gen.tplFiles = files; gen.tplName = folder;
+  setTemplates(folder, Object.keys(files).length);
+  if (gen.res) runGenerate();
+};
+$("tpl-clear").onclick = () => {
+  gen.tplHandle = null; gen.tplFiles = null; gen.tplName = "";
+  setPath("tpl-path", ""); $("tpl-path").textContent = TEXT.stdTemplates;
+  $("tpl-clear").disabled = true;
+  $("strict").checked = false; $("strict").disabled = true; $("strict-wrap").classList.add("disabled");
+  if (gen.res) runGenerate();
+};
+$("strict").onchange = () => { if (gen.res) runGenerate(); };
+
+$("gen-run").onclick = () => runGenerate();
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.key === "Enter") {
+    e.preventDefault();
+    if ($("tab-gen").classList.contains("active")) { if (!$("gen-run").disabled) runGenerate(); }
+    else runDns();
+  }
+});
+
+async function runGenerate() {
+  if (!gen.xlsxHandle && !gen.xlsxFile) return;
+  const btn = $("gen-run");
+  busy(btn, true);
+  await nextFrame();
+  try {
+    const bytes = await readExcelBytes();
+    const wb = await readWorkbook(bytes);
+    const custom = gen.tplHandle || gen.tplFiles ? { name: gen.tplName, files: await readTemplateDir() } : null;
+    gen.res = generateConfigs(wb, STD, custom, custom ? $("strict").checked : false);
+    const still = gen.res.configs.find((c) => c.host === gen.selected) || gen.res.failed.find((f) => f.host === gen.selected);
+    if (!still) gen.selected = (gen.res.configs[0] || gen.res.failed[0] || {}).host || null;
+    renderGen();
+  } catch (e) {
+    gen.res = null;
+    renderGenError(e.message === TEXT.reread ? e.message : TEXT.readError(e.message));
+  } finally { busy(btn, false); }
+}
+
+function renderGenError(msg) {
+  const w = $("gen-work");
+  w.replaceChildren(el("div", { class: "msg bad" }, el("h3", { text: msg })));
+}
+
+function cfgView(text, failed) {
+  const pre = el("pre", { class: "cfg" + (failed ? " failed" : ""), tabindex: "0" });
+  for (const line of text.replace(/\n$/, "").split("\n")) {
+    const span = el("span");
+    if (!failed && /^\s*!\s*$/.test(line)) { span.className = "bang"; span.textContent = line; }
+    else if (!failed && /^\S/.test(line)) {
+      const m = /^(\S+)(.*)$/.exec(line);
+      span.append(el("span", { class: "kw", style: "display:inline;padding:0" }, m[1]), m[2]);
+    } else span.textContent = line;
+    pre.append(span);
+  }
+  return pre;
+}
+
+function renderGen() {
+  const r = gen.res, w = $("gen-work");
+  if (r.errors.length) {
+    w.replaceChildren(el("div", { class: "msg bad", role: "alert" }, el("h3", { text: r.error_title }), el("ul", {}, r.errors.map((e) => el("li", { text: e })))));
+    status(r.error_title);
+    return;
+  }
+  const kids = [el("div", { class: "summary", text: TEXT.nGenerated(r.configs.length) })];
+  if (r.notes.length) kids.push(el("div", { class: "msg warn" }, el("ul", {}, r.notes.map((n) => el("li", { text: n })))));
+
+  // device list: generated (green / amber), failed (red), not generated (grey)
+  const list = el("div", { class: "devices", role: "listbox" });
+  const item = (host, cls, sub, onclick) => el("button", { class: "dev", role: "option", "aria-selected": String(gen.selected === host), onclick },
+    el("span", { class: "dot " + cls }), el("span", { class: "name", text: host }), sub ? el("span", { class: "os", text: sub }) : null);
+  for (const c of r.configs) list.append(item(c.host, c.left_out.length ? "warn" : "ok", c.os, () => { gen.selected = c.host; renderGen(); }));
+  for (const f of r.failed) list.append(item(f.host, "bad", TEXT.failed, () => { gen.selected = f.host; renderGen(); }));
+  for (const s of r.skipped) { list.append(el("div", { class: "dev", style: "cursor:default" }, el("span", { class: "dot off" }), el("span", { class: "name", text: TEXT.notGenerated }))); list.append(el("div", { class: "dev-note", text: s })); }
+
+  // console
+  const c = r.configs.find((x) => x.host === gen.selected);
+  const f = r.failed.find((x) => x.host === gen.selected);
+  const con = el("div", { class: "console" });
+  if (c) {
+    const blocks = Object.entries(c.blocks).filter(([, on]) => on).map(([b]) => b).join(", ");
+    con.append(el("div", { class: "console-bar" },
+      el("span", { class: "prompt" }, el("b", { text: c.host + "#" }), " " + c.output + ".cfg"),
+      el("span", { class: "meta", text: `${c.source}  |  ${blocks}` }),
+      el("span", { class: "actions" },
+        el("button", { class: "btn small", onclick: async () => { if (await copyText(c.text)) status(TEXT.copied(c.output + ".cfg")); } }, TEXT.copy),
+        el("button", { class: "btn small", onclick: async () => { const n = await saveFile(c.output + ".cfg", utf8(c.text), "text/plain", "cfg"); status(n ? TEXT.saved(n) : TEXT.cancelled); } }, TEXT.saveCfg),
+        el("button", { class: "btn small", onclick: saveAll }, TEXT.saveAll))));
+    if (c.left_out.length) con.append(el("div", { class: "leftout", text: TEXT.leftOut + c.left_out.join(", ") }));
+    con.append(cfgView(c.text, false));
+  } else if (f) {
+    con.append(el("div", { class: "console-bar" }, el("span", { class: "prompt" }, el("b", { text: f.host + "#" }), " " + TEXT.failed)));
+    con.append(cfgView(f.lines.join("\n"), true));
+  }
+  kids.push(el("div", { class: "split" }, list, con));
+  w.replaceChildren(...kids);
+  status(TEXT.nGenerated(r.configs.length));
+}
+
+async function saveAll() {
+  const cfgs = gen.res.configs;
+  if (window.showDirectoryPicker) {
+    let dir;
+    try { dir = await window.showDirectoryPicker({ mode: "readwrite" }); }
+    catch (e) { if (e.name === "AbortError") return; dir = null; }
+    if (dir) {
+      const exists = [];
+      for (const c of cfgs) { try { await dir.getFileHandle(c.output + ".cfg"); exists.push(c.output + ".cfg"); } catch (e) { /* new file */ } }
+      if (exists.length && !(await confirmList(TEXT.existTitle, exists))) { status(TEXT.cancelled); return; }
+      for (const c of cfgs) {
+        const w = await (await dir.getFileHandle(c.output + ".cfg", { create: true })).createWritable();
+        await w.write(utf8(c.text)); await w.close();
+      }
+      status(TEXT.savedAll(cfgs.length, "in " + dir.name));
+      return;
+    }
+  }
+  const zip = makeZip(cfgs.map((c) => ({ name: c.output + ".cfg", bytes: utf8(c.text) })));
+  const n = await saveFile("configs.zip", zip, "application/zip", "zip");
+  status(n ? TEXT.savedAll(cfgs.length, "in " + n) : TEXT.cancelled);
+}
+
+/* =============================================================================
+ * Tab 2 — DNS names
+ * ========================================================================== */
+const dns = { files: [], result: null, sort: { col: null, dir: 1 } };
+const dnsSettings = Object.assign(defaultDnsSettings(), prefs.dns || {});
+
+function persistDns() { prefs.dns = dnsSettings; savePrefs(prefs); }
+$("dns-domain").value = dnsSettings.domain;
+$("opt-secondary").checked = dnsSettings.include_secondary;
+$("opt-shutdown").checked = dnsSettings.exclude_shutdown;
+$("opt-lower").checked = dnsSettings.lowercase;
+$("dns-domain").oninput = (e) => { dnsSettings.domain = e.target.value.trim(); persistDns(); };
+$("opt-secondary").onchange = (e) => { dnsSettings.include_secondary = e.target.checked; persistDns(); if (dns.result) runDns(); };
+$("opt-shutdown").onchange = (e) => { dnsSettings.exclude_shutdown = e.target.checked; persistDns(); if (dns.result) runDns(); };
+$("opt-lower").onchange = (e) => { dnsSettings.lowercase = e.target.checked; persistDns(); if (dns.result) runDns(); };
+
+function renderAbbr() {
+  const body = $("abbr-rows");
+  body.replaceChildren(el("tr", {}, el("td", { class: "lbl", text: TEXT.abbrType }), el("td", { class: "lbl", text: TEXT.abbrShort }), el("td")));
+  dnsSettings.abbreviations.forEach((pair, i) => {
+    const inp = (j) => el("input", { type: "text", value: pair[j], spellcheck: "false", oninput: (e) => { pair[j] = e.target.value.trim(); persistDns(); } });
+    body.append(el("tr", {}, el("td", {}, inp(0)), el("td", { style: "width:90px" }, inp(1)),
+      el("td", {}, el("button", { class: "x", title: "Remove", onclick: () => { dnsSettings.abbreviations.splice(i, 1); persistDns(); renderAbbr(); } }, "×"))));
+  });
+}
+$("abbr-add").onclick = () => { dnsSettings.abbreviations.push(["", ""]); persistDns(); renderAbbr(); };
+$("abbr-reset").onclick = () => { dnsSettings.abbreviations = defaultDnsSettings().abbreviations; persistDns(); renderAbbr(); };
+renderAbbr();
+
+async function addConfigFiles(fileList) {
+  // find_text_files(): skip files over 5 MB and binary files (NUL bytes). Only parsed fields are kept.
+  const skipped = [];
+  for (const f of fileList) {
+    if (f.size > 5 * 1024 * 1024) { skipped.push(TEXT.skippedBig(f.name)); continue; }
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    if (bytes.includes(0)) { skipped.push(TEXT.skippedBig(f.name)); continue; }
+    dns.files.push(parseConfig(decodeText(bytes), f.name));
+  }
+  dns.files.sort((a, b) => a.source.toLowerCase().localeCompare(b.source.toLowerCase()));
+  renderFiles();
+  if (skipped.length) status(skipped.join("; "));
+}
+function renderFiles() {
+  const ul = $("dns-files");
+  ul.replaceChildren(...dns.files.map((f, i) => el("li", {},
+    el("span", { class: "host", text: f.hostname || "?" }),
+    el("span", { class: "fn", text: f.source, title: f.source }),
+    el("span", { class: "badge" + (f.platform === "IOS-XR" ? " xr" : "") + (!f.hostname ? " bad" : ""), text: f.hostname ? f.platform : "no hostname" }),
+    el("button", { class: "x", title: "Remove", onclick: () => { dns.files.splice(i, 1); renderFiles(); } }, "×"))));
+  $("dns-clear").disabled = !dns.files.length;
+}
+$("dns-add-files").onclick = () => $("dns-files-input").click();
+$("dns-files-input").onchange = async (e) => { await addConfigFiles([...e.target.files]); e.target.value = ""; };
+$("dns-add-folder").onclick = async () => {
+  if (window.showDirectoryPicker) {
+    try {
+      const h = await window.showDirectoryPicker();
+      const files = [];
+      for await (const [, x] of h.entries()) if (x.kind === "file") files.push(await x.getFile());
+      await addConfigFiles(files);
+      return;
+    } catch (e) { if (e.name === "AbortError") return; }
+  }
+  $("dns-folder-input").click();
+};
+$("dns-folder-input").onchange = async (e) => {
+  await addConfigFiles([...e.target.files].filter((f) => (f.webkitRelativePath || f.name).split("/").length === 2));
+  e.target.value = "";
+};
+$("dns-clear").onclick = () => { dns.files = []; renderFiles(); };
+dropZone($("dns-drop"), async (items) => {
+  const files = [];
+  for (const it of items) {
+    if (it.handle && it.handle.kind === "directory") { for await (const [, x] of it.handle.entries()) if (x.kind === "file") files.push(await x.getFile()); }
+    else if (it.file) files.push(it.file);
+  }
+  await addConfigFiles(files);
+});
+$("dns-run").onclick = () => runDns();
+
+function runDns() {
+  const sources = [...dns.files];
+  const pasted = $("dns-paste").value;
+  if (pasted.trim()) sources.push(parseConfig(pasted, TEXT.pasted));
+  if (!sources.length) { status(TEXT.noSource); return; }
+  dns.result = buildRecords(sources, dnsSettings);
+  renderDns();
+}
+
+function sortedRecords() {
+  const recs = [...dns.result.records];
+  const { col, dir } = dns.sort;
+  if (col === null) return recs;
+  return recs.sort((a, b) => dir * compareKeys(tableSortKey(col, recordRow(a)[col]), tableSortKey(col, recordRow(b)[col])));
+}
+
+function renderDns() {
+  const r = dns.result, w = $("dns-work");
+  const kids = [el("div", { class: "row" },
+    el("span", { class: "summary", text: summaryText(r) }),
+    el("span", { style: "margin-left:auto", class: "row" },
+      el("button", { class: "btn", onclick: async () => { const n = await saveFile("dns_records.csv", withBom(toCsv(sortedRecords())), "text/csv", "csv"); status(n ? TEXT.saved(n) : TEXT.cancelled); } }, TEXT.exportCsv),
+      el("button", { class: "btn", onclick: async () => { const n = await saveFile("dns_records.ps1", withBom(toPowershell(sortedRecords(), dnsSettings.domain)), "text/plain", "ps1"); status(n ? TEXT.saved(n) : TEXT.cancelled); } }, TEXT.exportPs),
+      el("button", { class: "btn", onclick: async () => { const recs = sortedRecords(); if (await copyText(toTsv(recs))) status(TEXT.tableCopied(recs.length)); } }, TEXT.copyTable)))];
+  if (r.problems.length) kids.push(el("div", { class: "msg warn" }, el("h3", { text: TEXT.problems }), el("ul", {}, r.problems.map((p) => el("li", { text: p })))));
+  const head = el("tr", {}, TABLE_COLUMNS.map((name, i) => el("th", {
+    "aria-sort": dns.sort.col === i ? (dns.sort.dir > 0 ? "ascending" : "descending") : null,
+    onclick: () => { dns.sort = { col: i, dir: dns.sort.col === i ? -dns.sort.dir : 1 }; renderDns(); },
+  }, name)));
+  const rows = sortedRecords().map((rec) => {
+    const v = recordRow(rec);
+    return el("tr", { class: rec.is_record ? "" : "norec" },
+      el("td", { class: "fqdn", text: v[0] }), el("td", { text: v[1] }), el("td", { text: v[2] }), el("td", { text: v[3] }),
+      el("td", { text: v[4] }), el("td", { text: v[5] }),
+      el("td", {}, el("span", { class: "status " + (rec.warnings.length ? "warn" : "ok"), text: v[6] })));
+  });
+  kids.push(el("div", { class: "table-wrap" }, el("table", { class: "records" }, el("thead", {}, head), el("tbody", {}, rows))));
+  w.replaceChildren(...kids);
+  status(summaryText(r));
+}
+/* UI END ===================================================================== */
+
+</script>
+</body>
+</html>

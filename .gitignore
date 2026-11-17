@@ -16,3 +16,7 @@ venv/
 
 # Excel lock files
 ~$*.xlsx
+
+# Local GUI settings
+netgen_gui_settings.json
+

@@ -1,0 +1,24 @@
+{#
+  interfaces.j2 (IOS-XR) - one L3 sub-interface per link of the device.
+  subinterfaces: [{name, description, dot1q, vrf, ip, mask}]
+    name         physical port (Port A or Port B column), e.g. TenGigE0/0/0/1
+    dot1q        used for BOTH the sub-interface number and the encapsulation
+    description  # <remote host> - <remote port>.<dot1q> - ( <VRF> ) #
+                 empty when the remote port is unknown -> no description line
+    mask         computed from the Subnet column (/31 -> 255.255.255.254)
+    vrf          empty for a GRT link -> no "vrf" line
+  Differences with IOS-XE: "vrf" instead of "vrf forwarding",
+  "ipv4 address" instead of "ip address", "encapsulation dot1q" in lower case.
+#}
+{% for i in subinterfaces %}
+interface {{ i.name }}.{{ i.dot1q }}
+{% if i.description %}
+ description {{ i.description }}
+{% endif %}
+{% if i.vrf %}
+ vrf {{ i.vrf }}
+{% endif %}
+ ipv4 address {{ i.ip }} {{ i.mask }}
+ encapsulation dot1q {{ i.dot1q }}
+!
+{% endfor %}

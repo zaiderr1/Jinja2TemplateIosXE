@@ -1,0 +1,12 @@
+{#
+  vrf.j2 (IOS-XR) - one VRF per VRF used by the device (none for GRT links).
+  vrfs: [{name, vpn_id}]
+  Differences with IOS-XE: the RD is not set here but under
+  "router bgp / vrf <name>" (see bgp.j2).
+#}
+{% for v in vrfs %}
+vrf {{ v.name }}
+ address-family ipv4 unicast
+ !
+!
+{% endfor %}

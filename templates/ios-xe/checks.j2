@@ -3,9 +3,32 @@
   with the same data as the other templates (see generate.py --debug).
   Run them before and after the change (for example in a NetBrain runbook)
   and compare. Commands follow the blocks chosen in the Generate sheet.
+  dependencies: [{kind, name, used_by}] what the config uses but doesn't
+                create (dependencies.py), checked first.
   Edit freely: change_kit.py renders whatever is here.
 #}
 ! Verification commands for {{ host }} - run before and after the change
+{% if dependencies %}
+!
+! --- Dependencies: must exist BEFORE the change ---
+{% for dep in dependencies %}
+{% if dep.kind == "interface" %}
+show interfaces {{ dep.name }} | include line protocol|Description
+{% elif dep.kind == "vrf" %}
+show vrf {{ dep.name }}
+{% elif dep.kind == "route-map" %}
+show route-map {{ dep.name }}
+{% elif dep.kind == "prefix-list" %}
+show ip prefix-list {{ dep.name }}
+{% elif dep.kind == "access-list" %}
+show ip access-lists {{ dep.name }}
+{% elif dep.kind == "policy-map" %}
+show policy-map {{ dep.name }}
+{% else %}
+show running-config | include {{ dep.name }}
+{% endif %}
+{% endfor %}
+{% endif %}
 {% if blocks.interfaces %}
 !
 ! --- Sub-interfaces ---

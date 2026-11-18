@@ -19,7 +19,8 @@
     - the RD is set under "vrf <name>" here, not in the VRF definition.
     - route-policy (RPL) instead of route-map; there is no "activate".
     - eBGP sends and accepts no routes without a route-policy in AND out:
-      the route-policies must exist on the device (they are not generated).
+      the route-policies must exist on the device (they are not generated;
+      generate.py lists them in the DEPENDENCIES block at the top of the config).
 #}
 router bgp {{ local_as }}
 {% if router_id is defined %}

@@ -92,6 +92,8 @@ from jinja2 import ChainableUndefined, Environment, FileSystemLoader, StrictUnde
 from jinja2.exceptions import TemplateError, UndefinedError
 from openpyxl import load_workbook
 
+import dependencies
+
 # Folder of this script: templates/ and the default Excel file are found from here,
 # whatever folder the script is started from.
 HERE = Path(__file__).resolve().parent
@@ -566,8 +568,10 @@ class Result:
     notes                 information to show, in order (warnings, defaults used).
     configs               one entry per generated device:
                             {"host", "os", "blocks", "output", "source",
-                             "text": the configuration,
+                             "text": the configuration (dependency slot first),
                              "data": what the templates received,
+                             "dependencies": what it uses but doesn't create
+                                             (dependencies.find),
                              "left_out": names the Excel didn't provide}
     failed                devices whose templates failed: {"host", "lines": [...]}
     skipped               messages about devices not generated
@@ -705,6 +709,9 @@ def generate_configs(wb, templates=None, strict=False):
             text = env.get_template("main.j2").render(blocks=job["blocks"], **d)
             if lenient:
                 text = "\n".join(l for l in text.split("\n") if SKIP not in l)
+            # What the config uses but doesn't create, listed at the top.
+            deps = dependencies.find(text)
+            text = dependencies.slot(deps, job["host"]) + text
         except UndefinedError as e:
             res.failed.append({"host": job["host"], "lines": [
                 f"{job['host']}: the templates in {tpl_dir} use a variable the Excel "
@@ -722,7 +729,7 @@ def generate_configs(wb, templates=None, strict=False):
         res.configs.append({
             "host": job["host"], "os": job["os"], "blocks": job["blocks"],
             "output": job["output"], "source": str(tpl_dir) if templates else job["os"],
-            "text": text, "data": d,
+            "text": text, "data": d, "dependencies": deps,
             "left_out": sorted(SkipUndefined.seen) if lenient else [],
         })
 

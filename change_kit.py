@@ -8,7 +8,8 @@ For every device selected in the Generate sheet:
     <device>.cfg            the configuration (same as generate.py)
     <device>_rollback.cfg   its rollback (rollback.py)
     <device>_checks.txt     the verification commands, with the real names
-                            (templates/<os>/checks.j2), e.g. for a NetBrain runbook
+                            (templates/<os>/checks.j2), e.g. for a NetBrain runbook,
+                            starting with the dependencies (dependencies.py)
 and for all devices together:
     dns_records.csv         the DNS names of the new sub-interfaces (dns_names.py)
     dns_records.ps1         the same as Windows DNS commands, to review and run
@@ -18,7 +19,9 @@ and for all devices together:
     --running FOLDER   running-configs saved before the change (one text file
                        per device, matched by their "hostname" line). With it,
                        the rollback is exact: old values are put back, and a
-                       VRF or neighbor that already existed is never removed.
+                       VRF or neighbor that already existed is never removed,
+                       and the dependencies of the config (route-maps, parent
+                       interfaces...) missing from it are reported.
                        Without it, the rollback only removes what is clearly
                        specific to the change (sub-interfaces, BGP neighbors)
                        and suggests the rest as "! REVIEW" comments.
@@ -39,6 +42,7 @@ from typing import Dict, List, Optional, Tuple
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+import dependencies
 import dns_names
 import generate
 import rollback as rollback_engine
@@ -59,6 +63,7 @@ class KitEntry:
     checks: str = ""
     checks_error: str = ""
     running_source: str = ""          # running-config used for the rollback ("" = none)
+    missing: List[dict] = field(default_factory=list)   # dependencies not in it
     dns: List[dns_names.DnsRecord] = field(default_factory=list)
 
     @property
@@ -125,7 +130,8 @@ def checks_env(os_name, templates=None):
 def render_checks(config, templates=None):
     env = checks_env(config["os"], templates)
     return env.get_template("checks.j2").render(
-        host=config["host"], blocks=config["blocks"], **config["data"])
+        host=config["host"], blocks=config["blocks"],
+        dependencies=config.get("dependencies", []), **config["data"])
 
 
 def dns_records_for(config, settings):
@@ -149,6 +155,7 @@ def build_kit(res, running=None, dns_settings=None, templates=None):
         before = (running or {}).get(c["host"].casefold())
         if before:
             e.running_source = before[0]
+            e.missing = dependencies.missing(c.get("dependencies", []), before[1])
         try:
             e.rollback = rollback_engine.build_rollback(
                 before[1] if before else None, c["text"],
@@ -220,7 +227,15 @@ def summary(entries):
             rb += f", {len(e.rollback.reviews)} point(s) to review"
         dns = f"{sum(r.is_record for r in e.dns)} DNS record(s)"
         lines.append(f"{e.host}: {rb}; {dns}" + ("; checks FAILED" if e.checks_error else ""))
+        lines += [f"  MISSING in {e.running_source}: {m['kind']} {m['name']}"
+                  for m in e.missing]
     return lines
+
+
+def missing_lines(entries):
+    """One line per dependency the device's running-config doesn't have."""
+    return [f"{e.host}: {m['kind']} {m['name']} is not in {e.running_source} "
+            f"(used by {dependencies.users_text(m)})" for e in entries for m in e.missing]
 
 
 # =============================================================================

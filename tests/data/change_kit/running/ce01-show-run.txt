@@ -19,6 +19,10 @@ interface TwentyFiveGigE1/0/1.100
 interface TwentyFiveGigE1/0/2
  no ip address
 !
+route-map RP-BGP65001OutBgp65100-underlay permit 10
+!
+route-map RP-BGP65100InBgp65001-underlay permit 10
+!
 router bgp 65001
  bgp log-neighbor-changes
  !

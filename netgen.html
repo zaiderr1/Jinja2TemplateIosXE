@@ -242,15 +242,15 @@ dialog pre { max-height: 200px; overflow: auto; background: var(--paper); paddin
 <!-- Standard templates (copied from templates/ by build_html.py — do not edit by hand) -->
 <script type="application/json" id="std-templates">{
  "ios-xe": {
-  "bgp.j2": "{#\n  bgp.j2 - BGP process, one address-family per VRF, one neighbor per link.\n  local_as   BGP AS of this device\n  router_id  optional (Router ID column of the Devices sheet)\n  bgp_vrfs:  [{vrf, vpn_id, neighbors: [{ip, remote_as, device_b, description}]}]\n  bgp_global: [{ip, remote_as, device_b, description}]  neighbors of GRT links\n              (empty VRF cell): global \"address-family ipv4\", policies named\n              with grt_label (\"GRT\"). No \"redistribute connected\" in the global\n              table: it would announce every connected network to every\n              global BGP peer, route reflectors included.\n    ip         IP of the other end of the link\n    remote_as  BGP AS of the other end\n    device_b   hostname of the other end (on either side of the link)\n  Route-map naming standard:\n    out: RP-BGP<local AS>OutBgp<remote AS>-<VRF>\n    in:  RP-BGP<remote AS>InBgp<local AS>-<VRF>\n  The route-maps themselves are not generated: they must exist on the device.\n#}\nrouter bgp {{ local_as }}\n{% if router_id is defined %}\n bgp router-id {{ router_id }}\n{% endif %}\n{% for n in bgp_global %}\n neighbor {{ n.ip }} remote-as {{ n.remote_as }}\n neighbor {{ n.ip }} description {{ n.description }}\n{% endfor %}\n{% if bgp_global %}\n !\n address-family ipv4\n{% for n in bgp_global %}\n  neighbor {{ n.ip }} activate\n  neighbor {{ n.ip }} route-map RP-BGP{{ local_as }}OutBgp{{ n.remote_as }}-{{ grt_label }} out\n  neighbor {{ n.ip }} route-map RP-BGP{{ n.remote_as }}InBgp{{ local_as }}-{{ grt_label }} in\n{% endfor %}\n exit-address-family\n{% endif %}\n{% for af in bgp_vrfs %}\n !\n address-family ipv4 vrf {{ af.vrf }}\n  redistribute connected\n{% for n in af.neighbors %}\n  neighbor {{ n.ip }} remote-as {{ n.remote_as }}\n  neighbor {{ n.ip }} description {{ n.device_b }}-(vrf {{ af.vrf }})\n  neighbor {{ n.ip }} activate\n  neighbor {{ n.ip }} route-map RP-BGP{{ local_as }}OutBgp{{ n.remote_as }}-{{ af.vrf }} out\n  neighbor {{ n.ip }} route-map RP-BGP{{ n.remote_as }}InBgp{{ local_as }}-{{ af.vrf }} in\n{% endfor %}\n exit-address-family\n{% endfor %}\n!\n",
-  "checks.j2": "{#\n  checks.j2 - verification commands for the change, rendered by change_kit.py\n  with the same data as the other templates (see generate.py --debug).\n  Run them before and after the change (for example in a NetBrain runbook)\n  and compare. Commands follow the blocks chosen in the Generate sheet.\n  Edit freely: change_kit.py renders whatever is here.\n#}\n! Verification commands for {{ host }} - run before and after the change\n{% if blocks.interfaces %}\n!\n! --- Sub-interfaces ---\n{% for i in subinterfaces %}\nshow interfaces {{ i.name }}.{{ i.dot1q }} | include line protocol|Description|Internet address\n{% endfor %}\n{% endif %}\n{% if blocks.bgp %}\n{% if bgp_global %}\n!\n! --- BGP, global table ---\nshow bgp ipv4 unicast summary\n{% for n in bgp_global %}\nping {{ n.ip }} repeat 5\nshow bgp ipv4 unicast neighbors {{ n.ip }} | include BGP state|Prefixes Current\nshow bgp ipv4 unicast neighbors {{ n.ip }} routes\nshow bgp ipv4 unicast neighbors {{ n.ip }} advertised-routes\n{% endfor %}\n{% endif %}\n{% for af in bgp_vrfs %}\n!\n! --- BGP, vrf {{ af.vrf }} ---\nshow bgp vpnv4 unicast vrf {{ af.vrf }} summary\n{% for n in af.neighbors %}\nping vrf {{ af.vrf }} {{ n.ip }} repeat 5\nshow bgp vpnv4 unicast vrf {{ af.vrf }} neighbors {{ n.ip }} | include BGP state|Prefixes Current\nshow bgp vpnv4 unicast vrf {{ af.vrf }} neighbors {{ n.ip }} routes\nshow bgp vpnv4 unicast vrf {{ af.vrf }} neighbors {{ n.ip }} advertised-routes\n{% endfor %}\n{% endfor %}\n{% endif %}\n",
+  "bgp.j2": "{#\n  bgp.j2 - BGP process, one address-family per VRF, one neighbor per link.\n  local_as   BGP AS of this device\n  router_id  optional (Router ID column of the Devices sheet)\n  bgp_vrfs:  [{vrf, vpn_id, neighbors: [{ip, remote_as, device_b, description}]}]\n  bgp_global: [{ip, remote_as, device_b, description}]  neighbors of GRT links\n              (empty VRF cell): global \"address-family ipv4\", policies named\n              with grt_label (\"GRT\"). No \"redistribute connected\" in the global\n              table: it would announce every connected network to every\n              global BGP peer, route reflectors included.\n    ip         IP of the other end of the link\n    remote_as  BGP AS of the other end\n    device_b   hostname of the other end (on either side of the link)\n  Route-map naming standard:\n    out: RP-BGP<local AS>OutBgp<remote AS>-<VRF>\n    in:  RP-BGP<remote AS>InBgp<local AS>-<VRF>\n  The route-maps themselves are not generated: they must exist on the device\n  (generate.py lists them in the DEPENDENCIES block at the top of the config).\n#}\nrouter bgp {{ local_as }}\n{% if router_id is defined %}\n bgp router-id {{ router_id }}\n{% endif %}\n{% for n in bgp_global %}\n neighbor {{ n.ip }} remote-as {{ n.remote_as }}\n neighbor {{ n.ip }} description {{ n.description }}\n{% endfor %}\n{% if bgp_global %}\n !\n address-family ipv4\n{% for n in bgp_global %}\n  neighbor {{ n.ip }} activate\n  neighbor {{ n.ip }} route-map RP-BGP{{ local_as }}OutBgp{{ n.remote_as }}-{{ grt_label }} out\n  neighbor {{ n.ip }} route-map RP-BGP{{ n.remote_as }}InBgp{{ local_as }}-{{ grt_label }} in\n{% endfor %}\n exit-address-family\n{% endif %}\n{% for af in bgp_vrfs %}\n !\n address-family ipv4 vrf {{ af.vrf }}\n  redistribute connected\n{% for n in af.neighbors %}\n  neighbor {{ n.ip }} remote-as {{ n.remote_as }}\n  neighbor {{ n.ip }} description {{ n.device_b }}-(vrf {{ af.vrf }})\n  neighbor {{ n.ip }} activate\n  neighbor {{ n.ip }} route-map RP-BGP{{ local_as }}OutBgp{{ n.remote_as }}-{{ af.vrf }} out\n  neighbor {{ n.ip }} route-map RP-BGP{{ n.remote_as }}InBgp{{ local_as }}-{{ af.vrf }} in\n{% endfor %}\n exit-address-family\n{% endfor %}\n!\n",
+  "checks.j2": "{#\n  checks.j2 - verification commands for the change, rendered by change_kit.py\n  with the same data as the other templates (see generate.py --debug).\n  Run them before and after the change (for example in a NetBrain runbook)\n  and compare. Commands follow the blocks chosen in the Generate sheet.\n  dependencies: [{kind, name, used_by}] what the config uses but doesn't\n                create (dependencies.py), checked first.\n  Edit freely: change_kit.py renders whatever is here.\n#}\n! Verification commands for {{ host }} - run before and after the change\n{% if dependencies %}\n!\n! --- Dependencies: must exist BEFORE the change ---\n{% for dep in dependencies %}\n{% if dep.kind == \"interface\" %}\nshow interfaces {{ dep.name }} | include line protocol|Description\n{% elif dep.kind == \"vrf\" %}\nshow vrf {{ dep.name }}\n{% elif dep.kind == \"route-map\" %}\nshow route-map {{ dep.name }}\n{% elif dep.kind == \"prefix-list\" %}\nshow ip prefix-list {{ dep.name }}\n{% elif dep.kind == \"access-list\" %}\nshow ip access-lists {{ dep.name }}\n{% elif dep.kind == \"policy-map\" %}\nshow policy-map {{ dep.name }}\n{% else %}\nshow running-config | include {{ dep.name }}\n{% endif %}\n{% endfor %}\n{% endif %}\n{% if blocks.interfaces %}\n!\n! --- Sub-interfaces ---\n{% for i in subinterfaces %}\nshow interfaces {{ i.name }}.{{ i.dot1q }} | include line protocol|Description|Internet address\n{% endfor %}\n{% endif %}\n{% if blocks.bgp %}\n{% if bgp_global %}\n!\n! --- BGP, global table ---\nshow bgp ipv4 unicast summary\n{% for n in bgp_global %}\nping {{ n.ip }} repeat 5\nshow bgp ipv4 unicast neighbors {{ n.ip }} | include BGP state|Prefixes Current\nshow bgp ipv4 unicast neighbors {{ n.ip }} routes\nshow bgp ipv4 unicast neighbors {{ n.ip }} advertised-routes\n{% endfor %}\n{% endif %}\n{% for af in bgp_vrfs %}\n!\n! --- BGP, vrf {{ af.vrf }} ---\nshow bgp vpnv4 unicast vrf {{ af.vrf }} summary\n{% for n in af.neighbors %}\nping vrf {{ af.vrf }} {{ n.ip }} repeat 5\nshow bgp vpnv4 unicast vrf {{ af.vrf }} neighbors {{ n.ip }} | include BGP state|Prefixes Current\nshow bgp vpnv4 unicast vrf {{ af.vrf }} neighbors {{ n.ip }} routes\nshow bgp vpnv4 unicast vrf {{ af.vrf }} neighbors {{ n.ip }} advertised-routes\n{% endfor %}\n{% endfor %}\n{% endif %}\n",
   "interfaces.j2": "{#\n  interfaces.j2 - one sub-interface per link of the device.\n  subinterfaces: [{name, description, dot1q, vrf, ip, mask}]\n    name         physical port (Port A or Port B column)\n    dot1q        used for BOTH the sub-interface number and the encapsulation\n    description  # <remote host> - <remote port>.<dot1q> - ( <VRF> ) #\n                 empty when the remote port is unknown -> no description line\n    mask         computed from the Subnet column (/31 -> 255.255.255.254)\n    vrf          empty for a GRT link -> no \"vrf forwarding\" line\n#}\n{% for i in subinterfaces %}\ninterface {{ i.name }}.{{ i.dot1q }}\n{% if i.description %}\n description {{ i.description }}\n{% endif %}\n encapsulation dot1Q {{ i.dot1q }}\n{% if i.vrf %}\n vrf forwarding {{ i.vrf }}\n{% endif %}\n ip address {{ i.ip }} {{ i.mask }}\n!\n{% endfor %}\n",
   "main.j2": "{#\n  main.j2 - entry point, rendered once per device by generate.py.\n  Includes each block in config order. blocks.* comes from the\n  VRF / Interfaces / BGP columns of the Generate sheet (empty = yes).\n  Comment blocks like this one never appear in the output.\n#}\n{% if blocks.vrf %}\n{% include 'vrf.j2' %}\n{% endif %}\n{% if blocks.interfaces %}\n{% include 'interfaces.j2' %}\n{% endif %}\n{% if blocks.bgp %}\n{% include 'bgp.j2' %}\n{% endif %}\nend\n",
   "vrf.j2": "{#\n  vrf.j2 - one VRF definition per VRF used by the device.\n  vrfs:      [{name, vpn_id}]   (VPN ID from the VRFs sheet)\n  local_as:  BGP AS of this device (Devices sheet)\n  RD standard: <local AS>:<VPN ID>\n#}\n{% for v in vrfs %}\nvrf definition {{ v.name }}\n rd {{ local_as }}:{{ v.vpn_id }}\n !\n address-family ipv4\n exit-address-family\n!\n{% endfor %}\n"
  },
  "ios-xr": {
-  "bgp.j2": "{#\n  bgp.j2 (IOS-XR) - BGP process, one VRF per VRF, one neighbor per link.\n  local_as   BGP AS of this device\n  router_id  optional (Router ID column of the Devices sheet)\n  bgp_vrfs:  [{vrf, vpn_id, neighbors: [{ip, remote_as, device_b, description}]}]\n  bgp_global: [{ip, remote_as, device_b, description}]  neighbors of GRT links\n              (empty VRF cell): global \"address-family ipv4 unicast\", policies\n              named with grt_label (\"GRT\"). No \"redistribute connected\" in the\n              global table (it would reach every global BGP peer).\n  Same naming standards as IOS-XE:\n    RD:        <local AS>:<VPN ID>\n    neighbor:  description <remote host>-(vrf <VRF>)\n    policy in: RP-BGP<remote AS>InBgp<local AS>-<VRF>\n    policy out: RP-BGP<local AS>OutBgp<remote AS>-<VRF>\n  Differences with IOS-XE:\n    - \"address-family vpnv4 unicast\" is required at the global level when the\n      device has VRF neighbors, otherwise the VRF address-families are refused\n      at commit. Likewise \"address-family ipv4 unicast\" for GRT neighbors.\n    - the RD is set under \"vrf <name>\" here, not in the VRF definition.\n    - route-policy (RPL) instead of route-map; there is no \"activate\".\n    - eBGP sends and accepts no routes without a route-policy in AND out:\n      the route-policies must exist on the device (they are not generated).\n#}\nrouter bgp {{ local_as }}\n{% if router_id is defined %}\n bgp router-id {{ router_id }}\n{% endif %}\n{% if bgp_global %}\n address-family ipv4 unicast\n !\n{% endif %}\n{% if bgp_vrfs %}\n address-family vpnv4 unicast\n !\n{% endif %}\n{% for n in bgp_global %}\n neighbor {{ n.ip }}\n  remote-as {{ n.remote_as }}\n  description {{ n.description }}\n  address-family ipv4 unicast\n   route-policy RP-BGP{{ n.remote_as }}InBgp{{ local_as }}-{{ grt_label }} in\n   route-policy RP-BGP{{ local_as }}OutBgp{{ n.remote_as }}-{{ grt_label }} out\n  !\n !\n{% endfor %}\n{% for af in bgp_vrfs %}\n vrf {{ af.vrf }}\n  rd {{ local_as }}:{{ af.vpn_id }}\n  address-family ipv4 unicast\n   redistribute connected\n  !\n{% for n in af.neighbors %}\n  neighbor {{ n.ip }}\n   remote-as {{ n.remote_as }}\n   description {{ n.device_b }}-(vrf {{ af.vrf }})\n   address-family ipv4 unicast\n    route-policy RP-BGP{{ n.remote_as }}InBgp{{ local_as }}-{{ af.vrf }} in\n    route-policy RP-BGP{{ local_as }}OutBgp{{ n.remote_as }}-{{ af.vrf }} out\n   !\n  !\n{% endfor %}\n !\n{% endfor %}\n!\n",
-  "checks.j2": "{#\n  checks.j2 (IOS-XR) - verification commands for the change, rendered by\n  change_kit.py with the same data as the other templates.\n  Run them before and after the change (for example in a NetBrain runbook)\n  and compare. Commands follow the blocks chosen in the Generate sheet.\n  Edit freely: change_kit.py renders whatever is here.\n#}\n! Verification commands for {{ host }} - run before and after the change\n{% if blocks.interfaces %}\n!\n! --- Sub-interfaces ---\n{% for i in subinterfaces %}\nshow ipv4 interface {{ i.name }}.{{ i.dot1q }} brief\n{% endfor %}\n{% endif %}\n{% if blocks.bgp %}\n{% if bgp_global %}\n!\n! --- BGP, global table ---\nshow bgp ipv4 unicast summary\n{% for n in bgp_global %}\nping {{ n.ip }} count 5\nshow bgp ipv4 unicast neighbor {{ n.ip }} | include \"BGP state|accepted|advertised\"\nshow bgp ipv4 unicast neighbor {{ n.ip }} routes\nshow bgp ipv4 unicast neighbor {{ n.ip }} advertised-routes\n{% endfor %}\n{% endif %}\n{% for af in bgp_vrfs %}\n!\n! --- BGP, vrf {{ af.vrf }} ---\nshow bgp vrf {{ af.vrf }} summary\n{% for n in af.neighbors %}\nping vrf {{ af.vrf }} {{ n.ip }} count 5\nshow bgp vrf {{ af.vrf }} neighbor {{ n.ip }} | include \"BGP state|accepted|advertised\"\nshow bgp vrf {{ af.vrf }} neighbor {{ n.ip }} routes\nshow bgp vrf {{ af.vrf }} neighbor {{ n.ip }} advertised-routes\n{% endfor %}\n{% endfor %}\n{% endif %}\n",
+  "bgp.j2": "{#\n  bgp.j2 (IOS-XR) - BGP process, one VRF per VRF, one neighbor per link.\n  local_as   BGP AS of this device\n  router_id  optional (Router ID column of the Devices sheet)\n  bgp_vrfs:  [{vrf, vpn_id, neighbors: [{ip, remote_as, device_b, description}]}]\n  bgp_global: [{ip, remote_as, device_b, description}]  neighbors of GRT links\n              (empty VRF cell): global \"address-family ipv4 unicast\", policies\n              named with grt_label (\"GRT\"). No \"redistribute connected\" in the\n              global table (it would reach every global BGP peer).\n  Same naming standards as IOS-XE:\n    RD:        <local AS>:<VPN ID>\n    neighbor:  description <remote host>-(vrf <VRF>)\n    policy in: RP-BGP<remote AS>InBgp<local AS>-<VRF>\n    policy out: RP-BGP<local AS>OutBgp<remote AS>-<VRF>\n  Differences with IOS-XE:\n    - \"address-family vpnv4 unicast\" is required at the global level when the\n      device has VRF neighbors, otherwise the VRF address-families are refused\n      at commit. Likewise \"address-family ipv4 unicast\" for GRT neighbors.\n    - the RD is set under \"vrf <name>\" here, not in the VRF definition.\n    - route-policy (RPL) instead of route-map; there is no \"activate\".\n    - eBGP sends and accepts no routes without a route-policy in AND out:\n      the route-policies must exist on the device (they are not generated;\n      generate.py lists them in the DEPENDENCIES block at the top of the config).\n#}\nrouter bgp {{ local_as }}\n{% if router_id is defined %}\n bgp router-id {{ router_id }}\n{% endif %}\n{% if bgp_global %}\n address-family ipv4 unicast\n !\n{% endif %}\n{% if bgp_vrfs %}\n address-family vpnv4 unicast\n !\n{% endif %}\n{% for n in bgp_global %}\n neighbor {{ n.ip }}\n  remote-as {{ n.remote_as }}\n  description {{ n.description }}\n  address-family ipv4 unicast\n   route-policy RP-BGP{{ n.remote_as }}InBgp{{ local_as }}-{{ grt_label }} in\n   route-policy RP-BGP{{ local_as }}OutBgp{{ n.remote_as }}-{{ grt_label }} out\n  !\n !\n{% endfor %}\n{% for af in bgp_vrfs %}\n vrf {{ af.vrf }}\n  rd {{ local_as }}:{{ af.vpn_id }}\n  address-family ipv4 unicast\n   redistribute connected\n  !\n{% for n in af.neighbors %}\n  neighbor {{ n.ip }}\n   remote-as {{ n.remote_as }}\n   description {{ n.device_b }}-(vrf {{ af.vrf }})\n   address-family ipv4 unicast\n    route-policy RP-BGP{{ n.remote_as }}InBgp{{ local_as }}-{{ af.vrf }} in\n    route-policy RP-BGP{{ local_as }}OutBgp{{ n.remote_as }}-{{ af.vrf }} out\n   !\n  !\n{% endfor %}\n !\n{% endfor %}\n!\n",
+  "checks.j2": "{#\n  checks.j2 (IOS-XR) - verification commands for the change, rendered by\n  change_kit.py with the same data as the other templates.\n  Run them before and after the change (for example in a NetBrain runbook)\n  and compare. Commands follow the blocks chosen in the Generate sheet.\n  dependencies: [{kind, name, used_by}] what the config uses but doesn't\n                create (dependencies.py), checked first.\n  Edit freely: change_kit.py renders whatever is here.\n#}\n! Verification commands for {{ host }} - run before and after the change\n{% if dependencies %}\n!\n! --- Dependencies: must exist BEFORE the change ---\n{% for dep in dependencies %}\n{% if dep.kind == \"interface\" %}\nshow interfaces {{ dep.name }} brief\n{% elif dep.kind == \"vrf\" %}\nshow vrf {{ dep.name }}\n{% elif dep.kind == \"route-policy\" %}\nshow rpl route-policy {{ dep.name }}\n{% elif dep.kind == \"prefix-list\" %}\nshow rpl prefix-set {{ dep.name }}\n{% elif dep.kind == \"access-list\" %}\nshow access-lists ipv4 {{ dep.name }}\n{% elif dep.kind == \"policy-map\" %}\nshow running-config policy-map {{ dep.name }}\n{% else %}\nshow running-config | include {{ dep.name }}\n{% endif %}\n{% endfor %}\n{% endif %}\n{% if blocks.interfaces %}\n!\n! --- Sub-interfaces ---\n{% for i in subinterfaces %}\nshow ipv4 interface {{ i.name }}.{{ i.dot1q }} brief\n{% endfor %}\n{% endif %}\n{% if blocks.bgp %}\n{% if bgp_global %}\n!\n! --- BGP, global table ---\nshow bgp ipv4 unicast summary\n{% for n in bgp_global %}\nping {{ n.ip }} count 5\nshow bgp ipv4 unicast neighbor {{ n.ip }} | include \"BGP state|accepted|advertised\"\nshow bgp ipv4 unicast neighbor {{ n.ip }} routes\nshow bgp ipv4 unicast neighbor {{ n.ip }} advertised-routes\n{% endfor %}\n{% endif %}\n{% for af in bgp_vrfs %}\n!\n! --- BGP, vrf {{ af.vrf }} ---\nshow bgp vrf {{ af.vrf }} summary\n{% for n in af.neighbors %}\nping vrf {{ af.vrf }} {{ n.ip }} count 5\nshow bgp vrf {{ af.vrf }} neighbor {{ n.ip }} | include \"BGP state|accepted|advertised\"\nshow bgp vrf {{ af.vrf }} neighbor {{ n.ip }} routes\nshow bgp vrf {{ af.vrf }} neighbor {{ n.ip }} advertised-routes\n{% endfor %}\n{% endfor %}\n{% endif %}\n",
   "interfaces.j2": "{#\n  interfaces.j2 (IOS-XR) - one L3 sub-interface per link of the device.\n  subinterfaces: [{name, description, dot1q, vrf, ip, mask}]\n    name         physical port (Port A or Port B column), e.g. TenGigE0/0/0/1\n    dot1q        used for BOTH the sub-interface number and the encapsulation\n    description  # <remote host> - <remote port>.<dot1q> - ( <VRF> ) #\n                 empty when the remote port is unknown -> no description line\n    mask         computed from the Subnet column (/31 -> 255.255.255.254)\n    vrf          empty for a GRT link -> no \"vrf\" line\n  Differences with IOS-XE: \"vrf\" instead of \"vrf forwarding\",\n  \"ipv4 address\" instead of \"ip address\", \"encapsulation dot1q\" in lower case.\n#}\n{% for i in subinterfaces %}\ninterface {{ i.name }}.{{ i.dot1q }}\n{% if i.description %}\n description {{ i.description }}\n{% endif %}\n{% if i.vrf %}\n vrf {{ i.vrf }}\n{% endif %}\n ipv4 address {{ i.ip }} {{ i.mask }}\n encapsulation dot1q {{ i.dot1q }}\n!\n{% endfor %}\n",
   "main.j2": "{#\n  main.j2 (IOS-XR) - entry point, rendered once per device by generate.py\n  when the OS column of the Generate sheet is ios-xr.\n  Same data and same blocks as templates/ios-xe/. blocks.* comes from the\n  VRF / Interfaces / BGP columns of the Generate sheet (empty = yes).\n  No \"end\" or \"commit\" at the end on purpose: paste in configure mode,\n  check with \"show configuration\", then commit yourself.\n#}\n{% if blocks.vrf %}\n{% include 'vrf.j2' %}\n{% endif %}\n{% if blocks.interfaces %}\n{% include 'interfaces.j2' %}\n{% endif %}\n{% if blocks.bgp %}\n{% include 'bgp.j2' %}\n{% endif %}\n",
   "vrf.j2": "{#\n  vrf.j2 (IOS-XR) - one VRF per VRF used by the device (none for GRT links).\n  vrfs: [{name, vpn_id}]\n  Differences with IOS-XE: the RD is not set here but under\n  \"router bgp / vrf <name>\" (see bgp.j2).\n#}\n{% for v in vrfs %}\nvrf {{ v.name }}\n address-family ipv4 unicast\n !\n!\n{% endfor %}\n"
@@ -1403,10 +1403,12 @@ function generateConfigs(wb, std, custom = null, strict = false) {
     const disabled = new Set(Object.entries(job.blocks).filter(([, on]) => !on).map(([b]) => b + ".j2"));
     const loader = (name) => (disabled.has(name) ? "" : Object.prototype.hasOwnProperty.call(files, name) ? files[name] : null);
     const d = data.get(job.host);
-    let text, seen;
+    let text, seen, deps;
     try {
       ({ text, seen } = renderTemplate(loader, "main.j2", { blocks: job.blocks, ...d }, lenient));
       if (lenient) text = text.split("\n").filter((l) => !l.includes(SKIP)).join("\n");
+      deps = findDependencies(text);
+      text = dependencySlot(deps, job.host) + text;
     } catch (e) {
       if (e instanceof UndefinedError) {
         res.failed.push({ host: job.host, lines: [
@@ -1426,7 +1428,7 @@ function generateConfigs(wb, std, custom = null, strict = false) {
     }
     res.configs.push({
       host: job.host, os: job.os, blocks: job.blocks, output: job.output,
-      source: custom ? custom.name : job.os, text, data: d,
+      source: custom ? custom.name : job.os, text, data: d, dependencies: deps,
       left_out: lenient ? [...seen].sort() : [],
     });
   }
@@ -1436,6 +1438,136 @@ function generateConfigs(wb, std, custom = null, strict = false) {
   const noPort = [...incomplete.keys()].filter((h) => !selected.has(h));
   if (noPort.length) res.skipped.push("Port B empty, so the Device B side can't be built: " + noPort.map((h) => `${h} (row ${incomplete.get(h).join(", ")})`).join(", "));
   return finish(res);
+}
+
+/* ---------------------------------------------------------------------------
+ * 5b. dependencies.py port: what a configuration uses but does not create.
+ *     Same rules, same order, same text as dependencies.py.
+ * ------------------------------------------------------------------------- */
+const DEP_KINDS = [
+  ["interface", true, ["interface {n}"]],
+  ["vrf", true, ["vrf definition {n}", "ip vrf {n}", "vrf {n}"]],
+  ["peer-group", false, ["neighbor {n} peer-group"]],
+  ["peer-session", false, ["template peer-session {n}"]],
+  ["peer-policy", false, ["template peer-policy {n}"]],
+  ["neighbor-group", false, ["neighbor-group {n}"]],
+  ["session-group", false, ["session-group {n}"]],
+  ["af-group", false, ["af-group {n} .*"]],
+  ["route-map", true, ["route-map {n}(?: .*)?"]],
+  ["route-policy", true, ["route-policy {n}(?:\\(.*\\))?"]],
+  ["prefix-list", true, ["ip prefix-list {n} .*", "prefix-set {n}"]],
+  ["access-list", true, ["ip access-list (?:standard |extended )?{n}", "access-list {n} .*", "ipv4 access-list {n}"]],
+  ["policy-map", true, ["policy-map (?:type \\S+ )?{n}"]],
+];
+const DEP_ORDER = DEP_KINDS.map(([k]) => k);
+const DEP_MAX_USERS = 3;
+const DEP_REFERENCES = [
+  ["interface (\\S+)\\.(\\d+)", "interface", 1, "top", "sub"],
+  ["(?:ip )?vrf forwarding (\\S+)", "vrf", 1, "sub", null],
+  ["neighbor (\\S+) route-map (\\S+) (in|out)", "route-map", 2, "sub", "neighbor"],
+  ["neighbor (\\S+) prefix-list (\\S+) (in|out)", "prefix-list", 2, "sub", "neighbor"],
+  ["neighbor (\\S+) peer-group (\\S+)", "peer-group", 2, "sub", "neighbor1"],
+  ["neighbor (\\S+) inherit peer-session (\\S+)", "peer-session", 2, "sub", "neighbor1"],
+  ["neighbor (\\S+) inherit peer-policy (\\S+)", "peer-policy", 2, "sub", "neighbor1"],
+  ["neighbor (\\S+) update-source (\\S+)", "interface", 2, "sub", "neighbor1"],
+  ["update-source (\\S+)", "interface", 1, "sub", null],
+  ["use (neighbor-group|session-group|af-group) (\\S+)", null, 2, "sub", null],
+  ["(?:ip |ipv4 )?access-group (\\S+)(?: (?:in|out|ingress|egress))?", "access-list", 1, "sub", null],
+  ["access-class (\\S+) .*", "access-list", 1, "sub", null],
+  ["service-policy (input|output) (\\S+)", "policy-map", 2, "sub", null],
+  ["route-policy (\\S+) (in|out)", "route-policy", 1, "sub", "direction"],
+  ["(.*?)\\broute-policy (\\S+?)(?:\\(.*\\))?(?: .*)?", "route-policy", 2, "sub", "before"],
+  ["(.*?)\\broute-map (\\S+)(?: .*)?", "route-map", 2, "sub", "before"],
+  ["(.*?)\\bprefix-list (\\S+)(?: .*)?", "prefix-list", 2, "sub", "before"],
+  ["vrf (\\S+)", "vrf", 1, "sub", null],
+  ["address-family ipv4 vrf (\\S+)", "vrf", 1, "sub", null],
+].map(([p, k, g, where, user]) => [new RegExp("^" + p + "$", "i"), k, g, where, user]);
+const DEP_NEIGHBOR = /^neighbor (\S+)$/i;
+const DEP_VRF_CONTEXT = /^(?:vrf|address-family ipv4 vrf) (\S+)$/i;
+
+function depLines(text) {
+  const out = [];
+  for (const raw of text.split(/\r\n|\r|\n/)) {
+    const s = raw.trim();
+    if (!s || s.startsWith("!") || s.toLowerCase().startsWith("description ")) continue;
+    out.push([raw.length - raw.replace(/^ +/, "").length, s]);
+  }
+  return out;
+}
+
+function depIsDefined(kind, name, text) {
+  const [, top, patterns] = DEP_KINDS.find(([k]) => k === kind);
+  const n = name.replace(/[.*+?^${}()|[\]\\\/-]/g, "\\$&");
+  const rx = new RegExp("^(?:" + patterns.map((p) => p.split("{n}").join(n)).join("|") + ")\\s*$", "i");
+  return depLines(text).some(([indent, s]) => (!top || indent === 0) && rx.test(s));
+}
+
+function depUser(m, user, stack, line) {
+  let vrf = null, neighbor = null;
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const v = DEP_VRF_CONTEXT.exec(stack[i][1]);
+    if (v && vrf === null) vrf = v[1];
+    const nb = DEP_NEIGHBOR.exec(stack[i][1]);
+    if (nb && neighbor === null) neighbor = nb[1];
+  }
+  const section = stack.length ? stack[0][1] : line;
+  let text;
+  if (user === "sub") return "sub-interface ." + m[2];
+  if (user === "neighbor") text = `neighbor ${m[1]} ${m[3]}`;
+  else if (user === "neighbor1") text = `neighbor ${m[1]}`;
+  else if (user === "direction") text = (neighbor ? `neighbor ${neighbor} ` : "") + m[2];
+  else if (user === "before") {
+    const low = section.toLowerCase();
+    if (low.startsWith("route-map ") || low.startsWith("route-policy ")) text = section;
+    else text = (neighbor ? `neighbor ${neighbor} ` : "") + (m[1].trim() || section);
+  } else text = neighbor ? `neighbor ${neighbor}` : section;
+  if (vrf && text !== section && !text.split(/\s+/).includes("vrf")) text += ` (vrf ${vrf})`;
+  return text;
+}
+
+function findDependencies(text) {
+  const found = new Map();
+  const stack = [];
+  for (const [indent, s] of depLines(text)) {
+    while (stack.length && stack[stack.length - 1][0] >= indent) stack.pop();
+    for (const [rx, kind, group, where, user] of DEP_REFERENCES) {
+      if ((where === "top") !== (indent === 0)) continue;
+      const m = rx.exec(s);
+      if (!m) continue;
+      const k = kind || m[1].toLowerCase();
+      const name = m[group];
+      const used = depUser(m, user, stack, s);
+      const key = k + "\u0000" + name;
+      if (!found.has(key)) found.set(key, { kind: k, name, used_by: [] });
+      const dep = found.get(key);
+      if (!dep.used_by.includes(used)) dep.used_by.push(used);
+      break;
+    }
+    stack.push([indent, s]);
+  }
+  const deps = [...found.values()].filter((d) => !depIsDefined(d.kind, d.name, text));
+  deps.sort((a, b) => DEP_ORDER.indexOf(a.kind) - DEP_ORDER.indexOf(b.kind));
+  return deps;
+}
+
+function depUsersText(dep) {
+  const users = dep.used_by;
+  let shown;
+  if (users.length > 1 && users.every((u) => u.startsWith("sub-interface ."))) {
+    shown = "sub-interfaces " + users.slice(0, DEP_MAX_USERS).map((u) => u.slice("sub-interface ".length)).join(", ");
+  } else shown = users.slice(0, DEP_MAX_USERS).join(", ");
+  if (users.length > DEP_MAX_USERS) shown += ` +${users.length - DEP_MAX_USERS} more`;
+  return shown;
+}
+
+function dependencySlot(deps, host) {
+  const rule = "! " + "-".repeat(75);
+  if (!deps.length) return `${rule}\n! DEPENDENCIES of ${host}: none - everything this configuration uses is in it.\n${rule}\n!\n`;
+  const width = Math.min(55, Math.max(...deps.map((d) => d.kind.length + 1 + d.name.length)));
+  const lines = [rule, `! DEPENDENCIES of ${host}: NOT generated here, must already exist on the device`, "! (check them before the change)"];
+  for (const d of deps) lines.push(`!   ${(d.kind + " " + d.name).padEnd(width)}  <- ${depUsersText(d)}`);
+  lines.push(rule, "!");
+  return lines.join("\n") + "\n";
 }
 
 function finish(res) {

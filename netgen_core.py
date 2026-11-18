@@ -76,6 +76,7 @@ def generate_kit_from_path(path, templates=None, strict=False, running_folder=""
             else:
                 running, problems = change_kit.load_running_configs(running_folder)
         entries = change_kit.build_kit(res, running, dns_settings, templates)
+        problems += change_kit.missing_lines(entries)
     except Exception as e:
         problems.append("Change kit not built: {}: {}".format(type(e).__name__, e))
         return res, {}, problems

@@ -14,7 +14,8 @@
   Route-map naming standard:
     out: RP-BGP<local AS>OutBgp<remote AS>-<VRF>
     in:  RP-BGP<remote AS>InBgp<local AS>-<VRF>
-  The route-maps themselves are not generated: they must exist on the device.
+  The route-maps themselves are not generated: they must exist on the device
+  (generate.py lists them in the DEPENDENCIES block at the top of the config).
 #}
 router bgp {{ local_as }}
 {% if router_id is defined %}

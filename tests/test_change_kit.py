@@ -92,6 +92,16 @@ class WithRunningConfigs(unittest.TestCase):
         pe = next(e for e in entries if e.host == "PE01")
         self.assertEqual(pe.running_source, "")      # no file for PE01: fallback mode
 
+    def test_dependencies_missing_from_the_running_config_are_reported(self):
+        running, _ = change_kit.load_running_configs(DATA / "running")
+        entries = change_kit.build_kit(generated(), running)
+        ce = next(e for e in entries if e.host == "CE01")
+        # The fixture has the underlay route-maps, not the GRT ones.
+        self.assertEqual([m["name"] for m in ce.missing],
+                         ["RP-BGP65001OutBgp65100-GRT", "RP-BGP65100InBgp65001-GRT"])
+        self.assertEqual(len(change_kit.missing_lines(entries)), 2)
+        self.assertIn("show route-map RP-BGP65001OutBgp65100-GRT", ce.checks)
+
     def test_two_files_for_the_same_device_are_both_ignored(self):
         with tempfile.TemporaryDirectory() as folder:
             for n in ("a.txt", "b.txt"):
@@ -113,7 +123,9 @@ class GuiBackend(unittest.TestCase):
         self.assertFalse(res.errors)
         self.assertEqual(sorted(kit), ["CE01", "PE01"])
         self.assertEqual(kit["CE01"].running_source, "ce01-show-run.txt")
-        self.assertEqual(problems, [])
+        # Only the missing GRT route-maps are reported (shown in the GUI notes).
+        self.assertEqual(len(problems), 2)
+        self.assertTrue(all("is not in ce01-show-run.txt" in p for p in problems))
 
     def test_missing_running_folder_is_a_problem_not_a_crash(self):
         import netgen_core

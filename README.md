@@ -151,7 +151,8 @@ For every device generated from the workbook, in the `kit` folder:
 
 `--running` is a folder with one `show running-config` per device, taken
 before the change; files are matched by their `hostname` line (or file name).
-With it, the rollback is exact. Without it, the rollback only removes what is
+With it, the rollback is exact and the dependencies missing from the device
+(a route-map not created yet, for example) are listed. Without it, the rollback only removes what is
 clearly specific to the change (sub-interfaces and BGP neighbors) and lists
 VRFs and address-families as `! REVIEW` suggestions, because they may already
 exist on the device. Existing files are kept unless `--force` is given.
@@ -190,6 +191,14 @@ With the example workbook, one Links row:
 gives `CE01.cfg` (and the mirrored `PE01.cfg`, see [examples/output](examples/output)):
 
 ```
+! ---------------------------------------------------------------------------
+! DEPENDENCIES of CE01: NOT generated here, must already exist on the device
+! (check them before the change)
+!   interface TwentyFiveGigE1/0/1              <- sub-interface .100
+!   route-map RP-BGP65001OutBgp65100-underlay  <- neighbor 192.0.2.1 out (vrf underlay)
+!   route-map RP-BGP65100InBgp65001-underlay   <- neighbor 192.0.2.1 in (vrf underlay)
+! ---------------------------------------------------------------------------
+!
 vrf definition underlay
  rd 65001:100
  !
@@ -215,6 +224,24 @@ router bgp 65001
 !
 end
 ```
+
+### Dependencies
+
+Every configuration starts with a **DEPENDENCIES** block: what the
+configuration uses but does not create, so it must already exist on the
+device. With the standard templates that is the route-maps (IOS-XE) or
+route-policies (IOS-XR) of each BGP neighbor and the physical port of each
+sub-interface, plus a VRF when the VRF block is set to `no`. Other templates
+(conf2jinja.py drafts) can also bring prefix-lists, access-lists,
+policy-maps, peer-groups / neighbor-groups and update-source interfaces.
+Anything the same configuration defines is not listed. The block is only
+`!` comments: pasting it on the device does nothing.
+
+`dependencies.py` builds it from the configuration text, so it follows any
+template change. `python dependencies.py some.cfg` prints it for any file.
+In the [change kit](#change-kit), the checks start with a `show` command per
+dependency, and with `--running` every dependency missing from the device's
+running-config is reported.
 
 ### Checks before anything is written
 
@@ -370,6 +397,7 @@ the dictionary built in `add_side()`, and use it in a template.
 ├── conf2jinja.py            running-config → draft templates
 ├── rollback.py              running-config before + change → rollback
 ├── change_kit.py            Excel → config + rollback + checks + DNS per device
+├── dependencies.py          what a config uses but doesn't create (route-maps...)
 ├── dns_names.py             running-configs → DNS records
 ├── netgen_gui.py(w)         desktop window (Tkinter); netgen_core.py its backend
 ├── netgen.html              the generator and DNS tool in a browser page

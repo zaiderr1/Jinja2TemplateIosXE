@@ -301,6 +301,8 @@ the dictionary built in `add_side()`, and use it in a template.
     ├── drafts/CE01/              conf2jinja.py output for it
     ├── output/                   generate.py output for netgen_input.xlsx
     └── mixed/                    IOS-XE CE + IOS-XR PE, one VRF link and one GRT link
+docs/
+└── netgen-gui-prompt.md     specification of a planned desktop GUI and DNS name generator
 ```
 
 ## Network data and this repository

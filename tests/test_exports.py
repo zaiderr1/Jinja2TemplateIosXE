@@ -24,10 +24,10 @@ interface Vlan10
         self.result = dns.build_records([dns.parse_config(text, "fake.cfg")])
 
     def test_powershell_active_and_commented_lines(self):
-        output = dns.to_powershell(self.result.records, "win.net.intra")
+        output = dns.to_powershell(self.result.records, "example.intra")
         self.assertEqual(output.splitlines(), [
-            'Add-DnsServerResourceRecordA -ZoneName "win.net.intra" -Name "CE01_Lo0" -IPv4Address "203.0.113.1" -CreatePtr',
-            '# Add-DnsServerResourceRecordA -ZoneName "win.net.intra" -Name "CE01_Gi0-0_100" -IPv4Address "192.0.2.1" -CreatePtr  # shutdown',
+            'Add-DnsServerResourceRecordA -ZoneName "example.intra" -Name "CE01_Lo0" -IPv4Address "203.0.113.1" -CreatePtr',
+            '# Add-DnsServerResourceRecordA -ZoneName "example.intra" -Name "CE01_Gi0-0_100" -IPv4Address "192.0.2.1" -CreatePtr  # shutdown',
         ])
         self.assertNotIn("198.51.100.65", output)  # secondary is informational by default
 
@@ -54,7 +54,7 @@ interface Vlan10
         self.assertIn("secondary", rows[-1][-1])
 
     def test_tsv_has_header_and_sanitizes_tabs_and_newlines(self):
-        record = dns.DnsRecord("CE01_Lo0.win.net.intra", "203.0.113.4", "CE01\tPE01",
+        record = dns.DnsRecord("CE01_Lo0.example.intra", "203.0.113.4", "CE01\tPE01",
                                "Loopback0\nInjected", warnings=[])
         rows = dns.to_tsv([record]).splitlines()
         self.assertEqual(rows[0].split("\t"), list(dns.TABLE_COLUMNS))

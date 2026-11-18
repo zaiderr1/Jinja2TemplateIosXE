@@ -60,7 +60,8 @@ a device to preview its configuration, then use **Copy**, **Save .cfg...**, or
 
 In **DNS names**, add running-config files, add a folder of text files, or paste
 one config. Files without a hostname are reported and skipped. Set the domain
-(default `win.net.intra`), choose whether to include secondary addresses,
+(the default `example.intra` is a placeholder: type your own domain once, it is
+remembered in the settings saved next to the program), choose whether to include secondary addresses,
 exclude shutdown interfaces, or lowercase names, and edit the interface
 abbreviation table with **Abbreviations...**. Generate names to preview the
 sortable FQDN, IPv4, device, interface, dot1q, VRF, and status columns.
@@ -72,7 +73,7 @@ Exports happen only after choosing a destination. The standalone DNS command
 is:
 
 ```
-python dns_names.py <files...> --domain win.net.intra --csv out.csv
+python dns_names.py <files...> --domain example.intra --csv out.csv
 ```
 
 Both tools work offline. Workbook and running-config contents are kept in

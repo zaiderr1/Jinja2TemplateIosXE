@@ -54,21 +54,21 @@ class DnsNameTests(unittest.TestCase):
         result = dns.build_records([dns.parse_config(XE_EXAMPLE, "xe.txt")])
         rows = [dns.record_row(r) for r in result.records]
         self.assertEqual(rows, [
-            ("CE01_Lo0.win.net.intra", "203.0.113.1", "CE01", "Loopback0", "", "", "OK"),
-            ("CE01_Twe1-0-1_100.win.net.intra", "192.0.2.0", "CE01",
+            ("CE01_Lo0.example.intra", "203.0.113.1", "CE01", "Loopback0", "", "", "OK"),
+            ("CE01_Twe1-0-1_100.example.intra", "192.0.2.0", "CE01",
              "TwentyFiveGigE1/0/1.100", "100", "underlay", "OK"),
-            ("CE01_Twe1-0-2_300.win.net.intra", "198.51.100.0", "CE01",
+            ("CE01_Twe1-0-2_300.example.intra", "198.51.100.0", "CE01",
              "TwentyFiveGigE1/0/2.300", "300", "", "shutdown"),
-            ("CE01_Vl10.win.net.intra", "198.51.100.65", "CE01", "Vlan10", "", "", "OK"),
+            ("CE01_Vl10.example.intra", "198.51.100.65", "CE01", "Vlan10", "", "", "OK"),
             (dns.NOT_A_RECORD, "198.51.100.126", "CE01", "Vlan10", "", "", "secondary"),
         ])
 
     def test_exact_xr_example_and_mismatched_dot1q(self):
         result = dns.build_records([dns.parse_config(XR_EXAMPLE, "xr.txt")])
         self.assertEqual([dns.record_row(r) for r in result.records], [
-            ("PE01_Te0-0-0-1_100.win.net.intra", "192.0.2.1", "PE01",
+            ("PE01_Te0-0-0-1_100.example.intra", "192.0.2.1", "PE01",
              "TenGigE0/0/0/1.100", "100", "underlay", "OK"),
-            ("PE01_BE10_201.win.net.intra", "198.51.100.129", "PE01",
+            ("PE01_BE10_201.example.intra", "198.51.100.129", "PE01",
              "Bundle-Ether10.200", "201", "", dns.STATUS_DOT1Q),
         ])
         self.assertEqual(result.files[0].platform, "IOS-XR")
@@ -105,11 +105,11 @@ class DnsNameTests(unittest.TestCase):
         text = "hostname CE01\ninterface StrangeThing0/1\n ip address 203.0.113.2 255.255.255.0\n"
         loaded = dns.parse_config(text)
         default = dns.build_records([loaded]).records[0]
-        self.assertEqual(default.fqdn, "CE01_StrangeThing0-1.win.net.intra")
+        self.assertEqual(default.fqdn, "CE01_StrangeThing0-1.example.intra")
         self.assertIn(dns.STATUS_UNKNOWN_TYPE, default.warnings)
         settings = dns.DnsSettings(abbreviations=list(dns.DEFAULT_ABBREVIATIONS) + [("StrangeThing", "St")])
         changed = dns.build_records([loaded], settings).records[0]
-        self.assertEqual(changed.fqdn, "CE01_St0-1.win.net.intra")
+        self.assertEqual(changed.fqdn, "CE01_St0-1.example.intra")
         self.assertNotIn(dns.STATUS_UNKNOWN_TYPE, changed.warnings)
 
     def test_secondary_shutdown_lowercase_options(self):
@@ -118,7 +118,7 @@ class DnsNameTests(unittest.TestCase):
         rows = dns.build_records([loaded], settings).records
         secondary = next(r for r in rows if r.ip == "198.51.100.126")
         self.assertTrue(secondary.is_record)
-        self.assertEqual(secondary.fqdn, "ce01_vl10-sec1.win.net.intra")
+        self.assertEqual(secondary.fqdn, "ce01_vl10-sec1.example.intra")
         self.assertIn(dns.STATUS_SECONDARY, secondary.warnings)
         self.assertEqual(len(dns.build_records([loaded], dns.DnsSettings(exclude_shutdown=True)).records), 4)
 
@@ -180,7 +180,7 @@ end
             source.write_text("hostname CE01\ninterface Loopback0\n ip address 203.0.113.11 255.255.255.255\n", encoding="utf-8")
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
-                code = dns.main([str(source), "--domain", "win.net.intra", "--csv", str(target)])
+                code = dns.main([str(source), "--domain", "example.intra", "--csv", str(target)])
             self.assertEqual(code, 0)
             self.assertEqual(stdout.getvalue().strip(), "1 records from 1 devices, 0 warnings")
             self.assertTrue(target.read_bytes().startswith(b"\xef\xbb\xbf"))

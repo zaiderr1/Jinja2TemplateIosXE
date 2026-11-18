@@ -178,7 +178,7 @@ def default_settings():
         },
         "generator": {"strict": False},
         "dns": {
-            "domain": "win.net.intra",
+            "domain": "example.intra",
             "include_secondary": False,
             "exclude_shutdown": False,
             "lowercase": False,

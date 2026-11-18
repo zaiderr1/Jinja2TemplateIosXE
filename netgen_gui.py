@@ -175,7 +175,7 @@ def dns_settings_from_prefs(prefs):
     """Build a dns_names.DnsSettings object from the "dns" preferences."""
     d = prefs.get("dns", {})
     return dns_names.DnsSettings(
-        domain=d.get("domain") or "win.net.intra",
+        domain=d.get("domain") or "example.intra",
         include_secondary=bool(d.get("include_secondary")),
         exclude_shutdown=bool(d.get("exclude_shutdown")),
         lowercase=bool(d.get("lowercase")),
@@ -753,7 +753,7 @@ class DnsTab(ttk.Frame):
         self.sort_state = (None, False)
 
         d = app.prefs.get("dns", {})
-        self.domain_var = tk.StringVar(value=d.get("domain") or "win.net.intra")
+        self.domain_var = tk.StringVar(value=d.get("domain") or "example.intra")
         self.sec_var = tk.BooleanVar(value=bool(d.get("include_secondary")))
         self.shut_var = tk.BooleanVar(value=bool(d.get("exclude_shutdown")))
         self.lower_var = tk.BooleanVar(value=bool(d.get("lowercase")))
@@ -960,7 +960,7 @@ class DnsTab(ttk.Frame):
         return dns_settings_from_prefs({"dns": self._dns_prefs()})
 
     def _dns_prefs(self):
-        return {"domain": self.domain_var.get().strip() or "win.net.intra",
+        return {"domain": self.domain_var.get().strip() or "example.intra",
                 "include_secondary": bool(self.sec_var.get()),
                 "exclude_shutdown": bool(self.shut_var.get()),
                 "lowercase": bool(self.lower_var.get()),

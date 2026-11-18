@@ -1,0 +1,47 @@
+Building configuration...
+Current configuration : 2048 bytes
+!
+hostname CE01
+!
+vrf definition underlay
+ rd 65001:100
+ !
+ address-family ipv4
+ exit-address-family
+!
+interface TwentyFiveGigE1/0/1
+ description UPLINK-PE01
+ no ip address
+!
+interface TwentyFiveGigE1/0/1.100
+ description # PE01 - TenGigE0/0/0/1.100 - ( underlay ) #
+ encapsulation dot1Q 100
+ vrf forwarding underlay
+ ip address 192.0.2.0 255.255.255.254
+!
+interface TwentyFiveGigE1/0/3
+ description OLD-LINK
+ ip address 198.51.100.10 255.255.255.254
+ shutdown
+!
+router bgp 65001
+ bgp log-neighbor-changes
+ neighbor 203.0.113.9 remote-as 65009
+ neighbor 203.0.113.9 description OLD-PEER
+ !
+ address-family ipv4
+  neighbor 203.0.113.9 activate
+  neighbor 203.0.113.9 route-map RM-OLD-IN in
+ exit-address-family
+ !
+ address-family ipv4 vrf underlay
+  redistribute connected
+  neighbor 192.0.2.1 remote-as 65100
+  neighbor 192.0.2.1 activate
+  neighbor 192.0.2.1 route-map RP-OLD-IN in
+ exit-address-family
+!
+ip route 0.0.0.0 0.0.0.0 198.51.100.1
+ip route 10.0.0.0 255.0.0.0 198.51.100.1
+!
+end

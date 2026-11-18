@@ -1,0 +1,39 @@
+{#
+  checks.j2 - verification commands for the change, rendered by change_kit.py
+  with the same data as the other templates (see generate.py --debug).
+  Run them before and after the change (for example in a NetBrain runbook)
+  and compare. Commands follow the blocks chosen in the Generate sheet.
+  Edit freely: change_kit.py renders whatever is here.
+#}
+! Verification commands for {{ host }} - run before and after the change
+{% if blocks.interfaces %}
+!
+! --- Sub-interfaces ---
+{% for i in subinterfaces %}
+show interfaces {{ i.name }}.{{ i.dot1q }} | include line protocol|Description|Internet address
+{% endfor %}
+{% endif %}
+{% if blocks.bgp %}
+{% if bgp_global %}
+!
+! --- BGP, global table ---
+show bgp ipv4 unicast summary
+{% for n in bgp_global %}
+ping {{ n.ip }} repeat 5
+show bgp ipv4 unicast neighbors {{ n.ip }} | include BGP state|Prefixes Current
+show bgp ipv4 unicast neighbors {{ n.ip }} routes
+show bgp ipv4 unicast neighbors {{ n.ip }} advertised-routes
+{% endfor %}
+{% endif %}
+{% for af in bgp_vrfs %}
+!
+! --- BGP, vrf {{ af.vrf }} ---
+show bgp vpnv4 unicast vrf {{ af.vrf }} summary
+{% for n in af.neighbors %}
+ping vrf {{ af.vrf }} {{ n.ip }} repeat 5
+show bgp vpnv4 unicast vrf {{ af.vrf }} neighbors {{ n.ip }} | include BGP state|Prefixes Current
+show bgp vpnv4 unicast vrf {{ af.vrf }} neighbors {{ n.ip }} routes
+show bgp vpnv4 unicast vrf {{ af.vrf }} neighbors {{ n.ip }} advertised-routes
+{% endfor %}
+{% endfor %}
+{% endif %}

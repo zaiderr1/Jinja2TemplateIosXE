@@ -56,6 +56,32 @@ def generate_from_path(path, templates=None, strict=False):
                 pass
 
 
+def generate_kit_from_path(path, templates=None, strict=False, running_folder="",
+                           dns_settings=None):
+    """generate_from_path() followed by the change kit (change_kit.build_kit).
+
+    Returns (result, kit entries {host: KitEntry}, problems). When the
+    generation has blocking errors, the kit is empty. A failure while building
+    the kit never hides the generated configurations: it becomes a problem.
+    """
+    import change_kit   # imported here: only needed for the change kit
+    res = generate_from_path(path, templates=templates, strict=strict)
+    if res.errors or not res.configs:
+        return res, {}, []
+    problems, running = [], None
+    try:
+        if (running_folder or "").strip():
+            if not Path(running_folder).is_dir():
+                problems.append("Running-configs folder not found: {}".format(running_folder))
+            else:
+                running, problems = change_kit.load_running_configs(running_folder)
+        entries = change_kit.build_kit(res, running, dns_settings, templates)
+    except Exception as e:
+        problems.append("Change kit not built: {}: {}".format(type(e).__name__, e))
+        return res, {}, problems
+    return res, {e.host: e for e in entries}, problems
+
+
 def device_rows(res):
     """Build list of device row items for the GUI treeview.
 
@@ -175,6 +201,8 @@ def default_settings():
             "save": "",
             "dns_input": "",
             "dns_export": "",
+            "running": "",
+            "rollback": "",
         },
         "generator": {"strict": False},
         "dns": {

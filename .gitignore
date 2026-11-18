@@ -7,6 +7,10 @@
 vars.yml
 !/examples/**/*.cfg
 !/examples/**/vars.yml
+!/tests/data/**/*.cfg
+# Running-configs and change kits saved inside the project folder
+/running/
+/kit/
 
 # Python
 __pycache__/

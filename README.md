@@ -16,6 +16,11 @@ running-config ───────────────► Jinja2 templates
 - **`conf2jinja.py`** reads a running-config and produces Jinja2 templates with
   loops (VRFs, sub-interfaces, BGP address-families and neighbors), so a good
   production config becomes the starting point of a template.
+- **`rollback.py`** builds the rollback of a change from the running-config
+  taken before it: old values are put back, additions are removed.
+- **`change_kit.py`** gives, for every device of the workbook, the config, its
+  rollback, the verification commands and the DNS records of the new
+  sub-interfaces: everything a change request needs.
 
 Both run locally, need no server, and only use `openpyxl` and `jinja2`.
 
@@ -24,6 +29,8 @@ Both run locally, need no server, and only use `openpyxl` and `jinja2`.
 - [Installation](#installation)
 - [Graphical interface](#graphical-interface)
 - [DNS names](#dns-names)
+- [Rollback](#rollback)
+- [Change kit](#change-kit)
 - [Generate configurations from Excel](#generate-configurations-from-excel)
 - [The Excel workbook](#the-excel-workbook)
 - [IOS-XR](#ios-xr)
@@ -46,7 +53,7 @@ package, service, or build step is used.
 
 On Windows, double-click `netgen_gui.pyw`; alternatively run `python
 netgen_gui.py` from the project folder. The window has **Config generator** and
-**DNS names** tabs. In Config generator, choose an `.xlsx` or `.xlsm` workbook
+**DNS names** and **Rollback** tabs. In Config generator, choose an `.xlsx` or `.xlsm` workbook
 and optionally a template folder. An empty folder field uses the standard
 IOS-XE/IOS-XR templates selected by the workbook's Generate sheet. **Stop on
 values missing from Excel** applies only with a custom template folder. Click
@@ -55,6 +62,13 @@ workbook errors are shown without configurations. Otherwise the results show
 generated, failed, and skipped devices, notes, and any values left out. Select
 a device to preview its configuration, then use **Copy**, **Save .cfg...**, or
 **Save all...**. Save all lists existing files and asks before replacing them.
+
+The optional **Running-configs** folder is used for exact rollbacks (see
+[Change kit](#change-kit)). Above the preview, **Config / Rollback / Checks**
+switches between the configuration, its rollback and its verification
+commands; Copy and Save act on what is shown. **Save change kit...** writes
+all of them for every device, plus the DNS files (the DNS tab's domain and
+options are used).
 
 ## DNS names
 
@@ -86,6 +100,65 @@ contents, hostnames, IP addresses, or loaded-file history. The test command is:
 python -m unittest discover -s tests -t .
 ```
 
+## Rollback
+
+You can't reload a device on its old running-config, so a rollback is the
+list of commands that undoes the change. `rollback.py` compares the change
+with the running-config taken **before** it and writes that list:
+
+```
+python rollback.py running-before.txt change.cfg -o rollback.cfg
+```
+
+or, in the window, the **Rollback** tab: load or paste both, click
+**Generate rollback**, then Copy or Save.
+
+| In the change | In the rollback |
+|---|---|
+| a setting whose value changed (`description`, `ip address`, `rd`, `remote-as`...) | the old value |
+| a new line | `no <line>` |
+| a new sub-interface, loopback, tunnel... | `no interface ...` |
+| a new BGP neighbor | one `no neighbor <ip>` |
+| `no ...` of something that existed | the old lines, put back |
+| `vrf forwarding` changed on an interface | the old VRF, then its old addresses |
+| a deleted VRF | the VRF and the interfaces it had |
+
+Lines starting with `! REVIEW` are not applied: they explain something to
+decide by hand, with the suggested command commented below. For example a
+physical interface or a router process missing from the running-config is
+never removed, an abbreviated interface name (`Gi0/0/1`) is reported, and a
+new global `address-family ipv4` under `router bgp` is only suggested. The
+change must be indented as in `show running-config` (a flat file is refused).
+IOS-XE and IOS-XR are detected automatically; the IOS-XR rollback ends with a
+reminder to check `show configuration` and commit.
+
+Read the rollback before using it: it is built from text, not from the device.
+
+## Change kit
+
+```
+python change_kit.py netgen_input.xlsx kit --running running --domain example.intra
+```
+
+For every device generated from the workbook, in the `kit` folder:
+
+| File | Content |
+|---|---|
+| `<device>.cfg` | the configuration (same as `generate.py`) |
+| `<device>_rollback.cfg` | its rollback |
+| `<device>_checks.txt` | verification commands with the real names (interfaces, VRF ping, BGP neighbor, routes received and advertised), to run before and after the change, e.g. in a NetBrain runbook |
+| `dns_records.csv`, `dns_records.ps1` | DNS records of the new sub-interfaces, same rules as the DNS tab |
+
+`--running` is a folder with one `show running-config` per device, taken
+before the change; files are matched by their `hostname` line (or file name).
+With it, the rollback is exact. Without it, the rollback only removes what is
+clearly specific to the change (sub-interfaces and BGP neighbors) and lists
+VRFs and address-families as `! REVIEW` suggestions, because they may already
+exist on the device. Existing files are kept unless `--force` is given.
+
+The commands come from `templates/<os>/checks.j2`: edit them to match your
+own runbooks (a custom template folder may have its own `checks.j2`).
+
 ## Browser interface (netgen.html)
 
 `netgen.html` does the same two jobs as the Tkinter window (Config generator and DNS names) in your web browser. It is a single file: double-click it, Edge or Chrome opens it. Nothing to install, no Python needed, no server, no network: a security rule inside the page blocks every network request, and nothing is saved unless you click Save or Export.
@@ -94,6 +167,8 @@ python -m unittest discover -s tests -t .
 - **DNS names**: same rules, options and exports as `dns_names.py` (CSV with BOM, PowerShell, Copy table). The options and the abbreviation table are remembered in the browser (they never contain configurations, IPs or hostnames).
 
 The page carries its own copy of `templates/`. **After changing a template, run `python build_html.py`** to copy it into `netgen.html` (`tests/test_html.py` fails until you do). The page reproduces `generate.py` and `dns_names.py` in JavaScript: when you change a rule in one of them, the same change must be made in the engine part of `netgen.html` (each function names the Python function it copies).
+
+The rollback and the change kit are only in the Python tools, not in the page.
 
 Limits: Excel cells formatted as dates are read as numbers; drafts may use the template features of `conf2jinja.py` and the standard templates (if/for/include/raw, filters default, upper, lower, join, length…), not every Jinja2 feature.
 
@@ -293,9 +368,15 @@ the dictionary built in `add_side()`, and use it in a template.
 ```
 ├── generate.py              Excel → configurations (engine + command line)
 ├── conf2jinja.py            running-config → draft templates
+├── rollback.py              running-config before + change → rollback
+├── change_kit.py            Excel → config + rollback + checks + DNS per device
+├── dns_names.py             running-configs → DNS records
+├── netgen_gui.py(w)         desktop window (Tkinter); netgen_core.py its backend
+├── netgen.html              the generator and DNS tool in a browser page
 ├── netgen_input.xlsx        input workbook with a fictional example (README sheet inside)
 ├── requirements.txt         openpyxl, jinja2
-├── templates/ios-xe/        master templates: main.j2, vrf.j2, interfaces.j2, bgp.j2
+├── templates/ios-xe/        master templates: main.j2, vrf.j2, interfaces.j2, bgp.j2,
+│                            checks.j2 (verification commands)
 ├── templates/ios-xr/        the same four blocks for IOS-XR
 └── examples/
     ├── running-config-CE01.txt   fictional running-config
@@ -311,9 +392,9 @@ docs/
 Everything in `examples/` and in the workbook is fictional: documentation
 address ranges (RFC 5737) and private AS numbers.
 
-Real running-configs, filled workbooks, `vars.yml` files and generated `.cfg`
-files describe a real network. Keep them out of this repository; `.gitignore`
-already excludes `output/`, `drafts/`, `*.cfg` and `vars.yml` outside `examples/`.
+Real running-configs, filled workbooks, `vars.yml` files, generated `.cfg`
+files, rollbacks and change kits describe a real network. Keep them out of this repository; `.gitignore`
+already excludes `output/`, `drafts/`, `running/`, `kit/`, `*.cfg` and `vars.yml` outside `examples/` and `tests/data/`.
 
 ## Limitations
 

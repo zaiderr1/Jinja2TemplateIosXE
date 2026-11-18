@@ -1,9 +1,12 @@
 """Network Config Tools - desktop interface (Tkinter / ttk).
 
-Two tabs:
+Three tabs:
   * "Config generator": Excel workbook -> Cisco configurations, through
-    generate.generate_configs() (called via netgen_core.generate_from_path).
+    generate.generate_configs() (called via netgen_core.generate_kit_from_path),
+    with, for each device, its rollback and verification commands
+    (change_kit.py), and "Save change kit..." for all files at once.
   * "DNS names": Cisco running-configs -> DNS records, through dns_names.py.
+  * "Rollback": running-config before + change -> rollback, through rollback.py.
 
 Rules followed by this file:
   * No business logic here: generation, parsing, naming rules, exports and
@@ -24,8 +27,10 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+import change_kit
 import dns_names
 import netgen_core
+import rollback
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +90,39 @@ TEXT = {
     "generating": "Reading the Excel file and generating...",
     "gen_done": "Done.",
     "gen_errors": "Fix the Excel file and click Generate again.",
+    "running_folder": "Running-configs:",
+    "running_hint": "(optional - folder of 'show running-config' taken before the change,"
+                    " for exact rollbacks)",
+    "pick_running": "Choose the folder of running-configs taken before the change",
+    "view_config": "Config",
+    "view_rollback": "Rollback",
+    "view_checks": "Checks",
+    "rb_from": "Rollback built from {file}",
+    "rb_without": "Rollback built WITHOUT running-config: only sub-interfaces and BGP "
+                  "neighbors are removed, the rest is in '! REVIEW' comments",
+    "rb_reviews": "{n} point(s) to review - search for '! REVIEW' in the rollback",
+    "save_kit": "Save change kit...",
+    "pick_kit_folder": "Choose the folder for the change kit",
+    "kit_saved": "Change kit: {n} file(s) saved in {folder}",
+    "kit_problems": "Change kit:",
+
+    # --- Rollback tab ---
+    "tab_rollback": "Rollback",
+    "rb_before": "Running-config BEFORE the change (optional):",
+    "rb_change": "Change to apply (indented, as you paste it on the device):",
+    "load_file": "Load file...",
+    "generate_rb": "Generate rollback",
+    "rb_result": "Rollback",
+    "rb_no_change": "Paste or load the change first.",
+    "rb_nothing": "Nothing to roll back: the change is already in the running-config.",
+    "rb_done": "Rollback generated ({platform}).",
+    "rb_done_reviews": "Rollback generated ({platform}) - {n} point(s) to review.",
+    "rb_error": "The change cannot be read:",
+    "rb_platform": "Platform:",
+    "rb_auto": "auto",
+    "save_rb": "Save...",
+    "pick_text": "Choose a configuration file",
+    "rb_types": "Configuration / text",
 
     # --- DNS names tab ---
     "add_files": "Add files...",
@@ -160,6 +198,34 @@ def run_generation(excel_path, template_folder="", strict=False):
     templates = (template_folder or "").strip() or None
     return netgen_core.generate_from_path(
         excel_path, templates=templates, strict=bool(strict and templates))
+
+
+def run_generation_kit(excel_path, template_folder="", strict=False,
+                       running_folder="", dns_settings=None):
+    """Worker function: like run_generation(), plus the change kit
+    (rollback, checks, DNS records) of every device.
+    Returns (result, {host: KitEntry}, problems)."""
+    templates = (template_folder or "").strip() or None
+    return netgen_core.generate_kit_from_path(
+        excel_path, templates=templates, strict=bool(strict and templates),
+        running_folder=(running_folder or "").strip(), dns_settings=dns_settings)
+
+
+def rollback_info(entry):
+    """Line shown above a rollback in the generator tab."""
+    lines = [TEXT["rb_from"].format(file=entry.running_source) if entry.running_source
+             else TEXT["rb_without"]]
+    if entry.rollback is not None and entry.rollback.reviews:
+        lines.append(TEXT["rb_reviews"].format(n=len(entry.rollback.reviews)))
+    return "\n".join(lines)
+
+
+def make_rollback(before_text, change_text, platform=""):
+    """Worker function for the Rollback tab: returns a rollback.RollbackResult.
+    Raises rollback.FormatError when the change is not indented."""
+    return rollback.build_rollback(before_text if before_text.strip() else None,
+                                   change_text, before_name="running-config (before)",
+                                   change_name="change", platform=platform or None)
 
 
 def config_header(config):
@@ -290,10 +356,14 @@ class GeneratorTab(ttk.Frame):
         self.jobs = JobRunner(self)
         self.result = None
         self.rows = []  # netgen_core.device_rows(result)
+        self.kit = {}   # {host: change_kit.KitEntry}
+        self.kit_domain = "example.intra"
 
         prefs = app.prefs
         self.excel_var = tk.StringVar()
         self.tpl_var = tk.StringVar()
+        self.running_var = tk.StringVar()
+        self.view_var = tk.StringVar(value="config")
         self.strict_var = tk.BooleanVar(
             value=bool(prefs.get("generator", {}).get("strict")))
 
@@ -326,8 +396,19 @@ class GeneratorTab(ttk.Frame):
         ttk.Label(box, text=TEXT["template_hint"], foreground=GREY).grid(
             row=2, column=1, sticky="w", padx=4)
 
+        ttk.Label(box, text=TEXT["running_folder"]).grid(row=3, column=0, sticky="w")
+        ttk.Entry(box, textvariable=self.running_var).grid(
+            row=3, column=1, sticky="ew", padx=4, pady=2)
+        rb = ttk.Frame(box)
+        rb.grid(row=3, column=2, pady=2)
+        ttk.Button(rb, text=TEXT["browse"], command=self._browse_running).pack(side="left")
+        ttk.Button(rb, text=TEXT["clear"], command=lambda: self.running_var.set("")).pack(
+            side="left", padx=(4, 0))
+        ttk.Label(box, text=TEXT["running_hint"], foreground=GREY).grid(
+            row=4, column=1, sticky="w", padx=4)
+
         line = ttk.Frame(box)
-        line.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        line.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(4, 0))
         self.strict_check = ttk.Checkbutton(
             line, text=TEXT["strict"], variable=self.strict_var,
             command=self.app.save_prefs_quietly)
@@ -368,8 +449,14 @@ class GeneratorTab(ttk.Frame):
         self.dev_tree.bind("<<TreeviewSelect>>", lambda e: self._show_selected())
 
         right = ttk.Frame(self.paned)
+        views = ttk.Frame(right)
+        views.pack(fill="x", pady=(0, 2))
+        for value, key in (("config", "view_config"), ("rollback", "view_rollback"),
+                           ("checks", "view_checks")):
+            ttk.Radiobutton(views, text=TEXT[key], value=value, variable=self.view_var,
+                            command=self._show_selected).pack(side="left", padx=(0, 8))
         self.info_var = tk.StringVar()
-        ttk.Label(right, textvariable=self.info_var).pack(fill="x")
+        ttk.Label(right, textvariable=self.info_var, justify="left").pack(fill="x")
         self.left_out_var = tk.StringVar()
         self.left_out_label = ttk.Label(right, textvariable=self.left_out_var,
                                         foreground=AMBER, wraplength=700)
@@ -385,9 +472,12 @@ class GeneratorTab(ttk.Frame):
         self.save_button = ttk.Button(buttons, text=TEXT["save_cfg"], command=self.save_one)
         self.save_all_button = ttk.Button(buttons, text=TEXT["save_all"],
                                           command=self.save_all)
+        self.save_kit_button = ttk.Button(buttons, text=TEXT["save_kit"],
+                                          command=self.save_kit)
         self.copy_button.pack(side="left")
         self.save_button.pack(side="left", padx=4)
         self.save_all_button.pack(side="left")
+        self.save_kit_button.pack(side="left", padx=4)
 
         self.paned.add(left, weight=1)
         self.paned.add(right, weight=3)
@@ -416,6 +506,13 @@ class GeneratorTab(ttk.Frame):
             self.tpl_var.set(path)
             self.app.remember_dir("templates", path)
 
+    def _browse_running(self):
+        path = filedialog.askdirectory(parent=self, title=TEXT["pick_running"],
+                                       initialdir=self.app.last_dir("running"))
+        if path:
+            self.running_var.set(path)
+            self.app.remember_dir("running", path)
+
     # ---- generation ------------------------------------------------------
     def generate(self):
         excel = self.excel_var.get().strip()
@@ -426,8 +523,11 @@ class GeneratorTab(ttk.Frame):
             return
         self.gen_button.state(["disabled"])
         self.app.status.set(TEXT["generating"])
-        self.jobs.run(run_generation,
-                      (excel, self.tpl_var.get(), self.strict_var.get()),
+        settings = self.app.dns.current_settings()
+        self.kit_domain = settings.domain    # the DNS names of the kit use it
+        self.jobs.run(run_generation_kit,
+                      (excel, self.tpl_var.get(), self.strict_var.get(),
+                       self.running_var.get(), settings),
                       self._on_result, self._on_crash)
 
     def _on_crash(self, message):
@@ -435,19 +535,21 @@ class GeneratorTab(ttk.Frame):
         self._show_errors(TEXT["unexpected_error"], [message])
         self.app.status.set(TEXT["unexpected_error"])
 
-    def _on_result(self, res):
+    def _on_result(self, value):
+        res, kit, problems = value
         self.gen_button.state(["!disabled"])
         if res.errors:
             self._show_errors(res.error_title, res.errors)
             self.app.status.set(TEXT["gen_errors"])
             return
-        self._show_result(res)
+        self._show_result(res, kit, problems)
         self.app.status.set(TEXT["gen_done"])
 
     # ---- display ---------------------------------------------------------
     def _clear_results(self):
         self.result = None
         self.rows = []
+        self.kit = {}
         self.dev_tree.delete(*self.dev_tree.get_children())
         self.info_var.set("")
         self.left_out_var.set("")
@@ -472,17 +574,19 @@ class GeneratorTab(ttk.Frame):
         self.msg_text.configure(state="disabled", height=min(20, len(errors) + 2))
         self.msg_frame.pack(fill="both", expand=True, pady=(8, 0))
 
-    def _show_result(self, res):
+    def _show_result(self, res, kit=None, problems=()):
         self._clear_results()
         self.result = res
+        self.kit = kit or {}
         n = len(res.configs)
         self.summary_var.set(TEXT["one_generated"] if n == 1
                              else TEXT["n_generated"].format(n=n))
         self.summary.pack(fill="x", pady=(8, 2))
-        if res.notes:
+        notes = list(res.notes) + [TEXT["kit_problems"] + " " + p for p in problems]
+        if notes:
             self.msg_text.configure(background=AMBER_BG, foreground=AMBER,
-                                    height=min(5, len(res.notes)))
-            set_text(self.msg_text, "\n".join(res.notes))
+                                    height=min(5, len(notes)))
+            set_text(self.msg_text, "\n".join(notes))
             self.msg_frame.pack(fill="x", pady=(0, 4))
         self.paned.pack(fill="both", expand=True, pady=(4, 0))
 
@@ -515,11 +619,21 @@ class GeneratorTab(ttk.Frame):
             set_text(self.preview, "")
         elif row["config"] is not None:
             cfg = row["config"]
-            self.info_var.set(config_header(cfg))
-            if cfg.get("left_out"):
-                self.left_out_var.set(TEXT["left_out"].format(
-                    names=", ".join(cfg["left_out"])))
-            set_text(self.preview, cfg["text"])
+            view = self.view_var.get()
+            entry = self.kit.get(cfg["host"])
+            if view == "config" or entry is None:
+                self.info_var.set(config_header(cfg))
+                if cfg.get("left_out"):
+                    self.left_out_var.set(TEXT["left_out"].format(
+                        names=", ".join(cfg["left_out"])))
+                set_text(self.preview, cfg["text"])
+            elif view == "rollback":
+                self.info_var.set(config_header(cfg))
+                self.left_out_var.set(rollback_info(entry))
+                set_text(self.preview, entry.rollback_text)
+            else:
+                self.info_var.set(config_header(cfg))
+                set_text(self.preview, entry.files[entry.output + "_checks.txt"])
         elif row["kind"] == "failed":
             set_text(self.preview, TEXT["failed_title"].format(host=row["label"])
                      + "\n" + "\n".join(row["lines"]), "failed")
@@ -534,29 +648,43 @@ class GeneratorTab(ttk.Frame):
             b.state(["!disabled"] if has_cfg else ["disabled"])
         has_any = bool(self.result and self.result.configs)
         self.save_all_button.state(["!disabled"] if has_any else ["disabled"])
+        self.save_kit_button.state(["!disabled"] if has_any and self.kit else ["disabled"])
 
     # ---- copy / save -----------------------------------------------------
-    def copy(self):
+    def _shown(self):
+        """(file name, text) of what the preview shows for the selected device."""
         row = self._selected_row()
         if not row or not row["config"]:
+            return None, None
+        cfg = row["config"]
+        entry = self.kit.get(cfg["host"])
+        view = self.view_var.get()
+        if view == "config" or entry is None:
+            return cfg["output"] + ".cfg", cfg["text"]
+        name = entry.output + ("_rollback.cfg" if view == "rollback" else "_checks.txt")
+        return name, entry.files[name]
+
+    def copy(self):
+        name, text = self._shown()
+        if text is None:
             return
         self.clipboard_clear()
-        self.clipboard_append(row["config"]["text"])
-        self.app.status.set(TEXT["copied"].format(name=row["config"]["output"] + ".cfg"))
+        self.clipboard_append(text)
+        self.app.status.set(TEXT["copied"].format(name=name))
 
     def save_one(self):
-        row = self._selected_row()
-        if not row or not row["config"]:
+        name, text = self._shown()
+        if text is None:
             return
-        cfg = row["config"]
+        ext = os.path.splitext(name)[1]
         path = filedialog.asksaveasfilename(
-            parent=self, title=TEXT["save_cfg"], defaultextension=".cfg",
-            initialdir=self.app.last_dir("save"), initialfile=cfg["output"] + ".cfg",
-            filetypes=[(TEXT["cfg_types"], "*.cfg"), (TEXT["all_files"], "*.*")])
+            parent=self, title=TEXT["save_cfg"], defaultextension=ext,
+            initialdir=self.app.last_dir("save"), initialfile=name,
+            filetypes=[(TEXT["cfg_types"], "*" + ext), (TEXT["all_files"], "*.*")])
         if not path:
             return  # the dialog asked for replacement itself
         try:
-            netgen_core.write_config(Path(path), cfg["text"])
+            netgen_core.write_config(Path(path), text)
         except OSError as e:
             messagebox.showerror(TEXT["app_title"], TEXT["save_failed"].format(err=e),
                                  parent=self)
@@ -604,6 +732,46 @@ class GeneratorTab(ttk.Frame):
                                  parent=self)
             return
         self.app.status.set(TEXT["saved_all"].format(n=len(written), folder=folder))
+
+    def save_kit(self):
+        """Config + rollback + checks of every device, and the DNS files."""
+        if not self.kit:
+            self.app.status.set(TEXT["nothing_to_save"])
+            return
+        folder = filedialog.askdirectory(parent=self, title=TEXT["pick_kit_folder"],
+                                         initialdir=self.app.last_dir("save"))
+        if not folder:
+            return
+        self.app.remember_dir("save", folder)
+        safe, unsafe = [], []
+        for entry in self.kit.values():
+            reason = netgen_core.unsafe_output_name(entry.output)
+            if reason:
+                unsafe.append("{}: {}".format(entry.output, reason))
+            else:
+                safe.append(entry)
+        if unsafe:
+            messagebox.showwarning(TEXT["app_title"],
+                                   TEXT["unsafe_names"].format(items="\n".join(unsafe)),
+                                   parent=self)
+        if not safe:
+            return
+        domain = self.kit_domain
+        _all, existing = change_kit.plan(folder, safe, domain)
+        if existing:
+            listing = "\n".join(p.name for p in existing)
+            if not messagebox.askyesno(TEXT["overwrite_title"],
+                                       TEXT["overwrite_msg"].format(files=listing),
+                                       parent=self, icon="warning"):
+                self.app.status.set(TEXT["save_cancelled"])
+                return
+        try:
+            written = change_kit.write_kit(folder, safe, domain, overwrite=True)
+        except OSError as e:
+            messagebox.showerror(TEXT["app_title"], TEXT["save_failed"].format(err=e),
+                                 parent=self)
+            return
+        self.app.status.set(TEXT["kit_saved"].format(n=len(written), folder=folder))
 
     def collect_prefs(self, prefs):
         prefs.setdefault("generator", {})["strict"] = bool(self.strict_var.get())
@@ -1083,10 +1251,177 @@ class DnsTab(ttk.Frame):
 
 
 # ---------------------------------------------------------------------------
+# Tab 3 - Rollback
+# ---------------------------------------------------------------------------
+def make_editable_text(master, height=8):
+    """An editable Text widget with scrollbars, in a frame."""
+    frame = ttk.Frame(master)
+    text = tk.Text(frame, height=height, wrap="none", font=("Consolas", 9),
+                   relief="solid", borderwidth=1, undo=True)
+    ys = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+    xs = ttk.Scrollbar(frame, orient="horizontal", command=text.xview)
+    text.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
+    text.grid(row=0, column=0, sticky="nsew")
+    ys.grid(row=0, column=1, sticky="ns")
+    xs.grid(row=1, column=0, sticky="ew")
+    frame.rowconfigure(0, weight=1)
+    frame.columnconfigure(0, weight=1)
+    return frame, text
+
+
+class RollbackTab(ttk.Frame):
+    """Running-config before + change -> rollback (rollback.py)."""
+
+    PLATFORMS = ("auto", "ios-xe", "ios-xr")
+
+    def __init__(self, master, app):
+        super().__init__(master, padding=8)
+        self.app = app
+        self.jobs = JobRunner(self)
+        self.result = None
+        self.platform_var = tk.StringVar(value="auto")
+
+        paned = ttk.PanedWindow(self, orient="horizontal")
+        paned.pack(fill="both", expand=True)
+        left = ttk.Frame(paned, padding=(0, 0, 6, 0))
+        right = ttk.Frame(paned)
+        paned.add(left, weight=1)
+        paned.add(right, weight=1)
+
+        self.before_text = self._input(left, "rb_before")
+        self.change_text = self._input(left, "rb_change")
+        line = ttk.Frame(left)
+        line.pack(fill="x", pady=(4, 0))
+        ttk.Label(line, text=TEXT["rb_platform"]).pack(side="left")
+        ttk.Combobox(line, textvariable=self.platform_var, values=self.PLATFORMS,
+                     state="readonly", width=8).pack(side="left", padx=4)
+        self.gen_button = ttk.Button(line, text=TEXT["generate_rb"], command=self.generate)
+        self.gen_button.pack(side="right")
+        ttk.Label(line, text=TEXT["generate_hint"], foreground=GREY).pack(side="right", padx=6)
+
+        ttk.Label(right, text=TEXT["rb_result"], font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        self.info_var = tk.StringVar()
+        ttk.Label(right, textvariable=self.info_var, foreground=AMBER, wraplength=500,
+                  justify="left").pack(fill="x")
+        frame, self.output = make_scrolled_text(right, height=10, font=("Consolas", 10))
+        self.output.tag_configure("review", foreground=AMBER)
+        self.output.tag_configure("error", foreground=RED)
+        frame.pack(fill="both", expand=True, pady=(2, 4))
+        buttons = ttk.Frame(right)
+        buttons.pack(fill="x")
+        self.copy_button = ttk.Button(buttons, text=TEXT["copy"], command=self.copy)
+        self.save_button = ttk.Button(buttons, text=TEXT["save_rb"], command=self.save)
+        self.copy_button.pack(side="left")
+        self.save_button.pack(side="left", padx=4)
+        self._update_buttons()
+
+    def _input(self, box, label_key):
+        head = ttk.Frame(box)
+        head.pack(fill="x", pady=(4, 0))
+        ttk.Label(head, text=TEXT[label_key]).pack(side="left")
+        frame, text = make_editable_text(box)
+        ttk.Button(head, text=TEXT["clear"],
+                   command=lambda: text.delete("1.0", "end")).pack(side="right")
+        ttk.Button(head, text=TEXT["load_file"],
+                   command=lambda: self._load_into(text)).pack(side="right", padx=4)
+        frame.pack(fill="both", expand=True)
+        return text
+
+    def _load_into(self, widget):
+        path = filedialog.askopenfilename(
+            parent=self, title=TEXT["pick_text"], initialdir=self.app.last_dir("rollback"),
+            filetypes=[(TEXT["rb_types"], "*.txt *.cfg *.conf *.log"),
+                       (TEXT["all_files"], "*.*")])
+        if not path:
+            return
+        try:
+            content = dns_names.read_text_file(Path(path))
+        except OSError as e:
+            messagebox.showerror(TEXT["app_title"], str(e), parent=self)
+            return
+        self.app.remember_dir("rollback", os.path.dirname(path))
+        widget.delete("1.0", "end")
+        widget.insert("1.0", content)
+
+    def generate(self):
+        change = self.change_text.get("1.0", "end-1c")
+        if not change.strip():
+            self.app.status.set(TEXT["rb_no_change"])
+            return
+        if self.jobs.busy:
+            return
+        before = self.before_text.get("1.0", "end-1c")
+        platform = self.platform_var.get()
+        self.gen_button.state(["disabled"])
+        self.app.status.set(TEXT["working"])
+        self.jobs.run(make_rollback, (before, change, "" if platform == "auto" else platform),
+                      self._on_result, self._on_error)
+
+    def _on_error(self, message):
+        """Worker raised: an unreadable change (FormatError) or a bug."""
+        self.gen_button.state(["!disabled"])
+        self.result = None
+        self.info_var.set("")
+        set_text(self.output, TEXT["rb_error"] + "\n" + message, "error")
+        self.app.status.set(TEXT["rb_error"])
+        self._update_buttons()
+
+    def _on_result(self, res):
+        self.gen_button.state(["!disabled"])
+        self.result = res
+        self.output.configure(state="normal")
+        self.output.delete("1.0", "end")
+        for line in res.text.splitlines(True):
+            self.output.insert("end", line, "review" if "REVIEW" in line else ())
+        self.output.configure(state="disabled")
+        if res.empty:
+            self.info_var.set(TEXT["rb_nothing"])
+            self.app.status.set(TEXT["rb_nothing"])
+        elif res.reviews:
+            self.info_var.set(TEXT["rb_reviews"].format(n=len(res.reviews)))
+            self.app.status.set(TEXT["rb_done_reviews"].format(platform=res.platform,
+                                                               n=len(res.reviews)))
+        else:
+            self.info_var.set("")
+            self.app.status.set(TEXT["rb_done"].format(platform=res.platform))
+        self._update_buttons()
+
+    def _update_buttons(self):
+        state = ["!disabled"] if self.result is not None else ["disabled"]
+        self.copy_button.state(state)
+        self.save_button.state(state)
+
+    def copy(self):
+        if self.result is None:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(self.result.text)
+        self.app.status.set(TEXT["copied"].format(name=TEXT["rb_result"]))
+
+    def save(self):
+        if self.result is None:
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self, title=TEXT["save_rb"], defaultextension=".cfg",
+            initialdir=self.app.last_dir("rollback"), initialfile="rollback.cfg",
+            filetypes=[(TEXT["cfg_types"], "*.cfg"), (TEXT["all_files"], "*.*")])
+        if not path:
+            return
+        try:
+            netgen_core.write_config(Path(path), self.result.text)
+        except OSError as e:
+            messagebox.showerror(TEXT["app_title"], TEXT["save_failed"].format(err=e),
+                                 parent=self)
+            return
+        self.app.remember_dir("rollback", os.path.dirname(path))
+        self.app.status.set(TEXT["saved"].format(name=os.path.basename(path)))
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 class NetgenApp:
-    """The window: two tabs, a status bar, and the preferences."""
+    """The window: three tabs, a status bar, and the preferences."""
 
     def __init__(self, root):
         self.root = root
@@ -1108,8 +1443,10 @@ class NetgenApp:
         self.notebook.pack(fill="both", expand=True, padx=4, pady=4)
         self.generator = GeneratorTab(self.notebook, self)
         self.dns = DnsTab(self.notebook, self)
+        self.rollback = RollbackTab(self.notebook, self)
         self.notebook.add(self.generator, text=TEXT["tab_generator"])
         self.notebook.add(self.dns, text=TEXT["tab_dns"])
+        self.notebook.add(self.rollback, text=TEXT["tab_rollback"])
 
         root.bind_all("<Control-Return>", self._ctrl_enter)
         root.bind_all("<Control-KP_Enter>", self._ctrl_enter)
@@ -1119,6 +1456,8 @@ class NetgenApp:
         """Ctrl+Enter runs the action of the visible tab."""
         if self.notebook.select() == str(self.dns):
             self.dns.generate()
+        elif self.notebook.select() == str(self.rollback):
+            self.rollback.generate()
         else:
             self.generator.generate()
         return "break"

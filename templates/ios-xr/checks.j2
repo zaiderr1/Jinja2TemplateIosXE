@@ -1,0 +1,39 @@
+{#
+  checks.j2 (IOS-XR) - verification commands for the change, rendered by
+  change_kit.py with the same data as the other templates.
+  Run them before and after the change (for example in a NetBrain runbook)
+  and compare. Commands follow the blocks chosen in the Generate sheet.
+  Edit freely: change_kit.py renders whatever is here.
+#}
+! Verification commands for {{ host }} - run before and after the change
+{% if blocks.interfaces %}
+!
+! --- Sub-interfaces ---
+{% for i in subinterfaces %}
+show ipv4 interface {{ i.name }}.{{ i.dot1q }} brief
+{% endfor %}
+{% endif %}
+{% if blocks.bgp %}
+{% if bgp_global %}
+!
+! --- BGP, global table ---
+show bgp ipv4 unicast summary
+{% for n in bgp_global %}
+ping {{ n.ip }} count 5
+show bgp ipv4 unicast neighbor {{ n.ip }} | include "BGP state|accepted|advertised"
+show bgp ipv4 unicast neighbor {{ n.ip }} routes
+show bgp ipv4 unicast neighbor {{ n.ip }} advertised-routes
+{% endfor %}
+{% endif %}
+{% for af in bgp_vrfs %}
+!
+! --- BGP, vrf {{ af.vrf }} ---
+show bgp vrf {{ af.vrf }} summary
+{% for n in af.neighbors %}
+ping vrf {{ af.vrf }} {{ n.ip }} count 5
+show bgp vrf {{ af.vrf }} neighbor {{ n.ip }} | include "BGP state|accepted|advertised"
+show bgp vrf {{ af.vrf }} neighbor {{ n.ip }} routes
+show bgp vrf {{ af.vrf }} neighbor {{ n.ip }} advertised-routes
+{% endfor %}
+{% endfor %}
+{% endif %}

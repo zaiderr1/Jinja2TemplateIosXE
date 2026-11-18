@@ -65,7 +65,7 @@ class LoadedFile:
 
 @dataclass
 class DnsSettings:
-    domain: str = "win.net.intra"
+    domain: str = "example.intra"
     include_secondary: bool = False
     exclude_shutdown: bool = False
     lowercase: bool = False
@@ -353,7 +353,7 @@ def main(argv=None):
     """CLI: no output files unless --csv or --powershell is supplied."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("files", nargs="+")
-    parser.add_argument("--domain", default="win.net.intra")
+    parser.add_argument("--domain", default="example.intra")
     parser.add_argument("--csv", metavar="PATH")
     parser.add_argument("--powershell", metavar="PATH")
     parser.add_argument("--lowercase", action="store_true")

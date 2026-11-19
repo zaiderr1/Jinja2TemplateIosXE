@@ -228,6 +228,15 @@ dialog pre { max-height: 200px; overflow: auto; background: var(--paper); paddin
           <div class="row" style="margin-top:6px"><button class="btn small" id="abbr-add" data-t="abbrAdd"></button><button class="btn small" id="abbr-reset" data-t="abbrReset"></button></div>
         </details>
       </section>
+      <section class="box">
+        <h2 data-t="leaveOut"></h2>
+        <p class="hint" id="excl-types"></p>
+        <label class="check"><input type="checkbox" id="opt-unknown"> <span data-t="optUnknown"></span></label>
+        <div class="field"><label for="excl-patterns" data-t="exclPatterns"></label><input type="text" id="excl-patterns" spellcheck="false"></div>
+        <div class="field"><label for="excl-vrfs" data-t="exclVrfs"></label><input type="text" id="excl-vrfs" spellcheck="false"></div>
+        <label class="check"><input type="checkbox" id="show-excluded"> <span data-t="showExcluded"></span></label>
+        <p class="hint" data-t="noDnsCheck"></p>
+      </section>
       <button class="btn primary" id="dns-run" data-t="dnsGenerate"></button>
     </div>
     <div class="work" id="dns-work">
@@ -1594,7 +1603,7 @@ const STATUS = {
   UNKNOWN_TYPE: "unknown interface type",
 };
 const NOT_A_RECORD = "(not a record)";
-const TABLE_COLUMNS = ["FQDN", "IPv4 address", "Device", "Interface", "dot1q", "VRF", "Status"];
+const TABLE_COLUMNS = ["FQDN", "IPv4 address", "Device", "Interface", "dot1q", "VRF", "Status", "Existing DNS"];
 
 function decodeText(bytes) {
   // read_text_file(): UTF-8 (with or without BOM), else Windows cp1252
@@ -1691,9 +1700,41 @@ function shortInterfaceName(name, abbreviations) {
   return [base.replace(/[^A-Za-z0-9-]/g, "-"), sub ? sub[1] : "", known];
 }
 
+function interfaceType(name, abbreviations) {
+  // interface_type(): short type ("Te"), or "" when unknown
+  const token = /^[A-Za-z]+(?:-[A-Za-z]+)*/.exec(name);
+  const kind = token ? token[0].toLowerCase() : "";
+  for (const [longName, shortName] of abbreviations) {
+    if (kind === longName.toLowerCase() || kind === shortName.toLowerCase()) return shortName;
+  }
+  return "";
+}
+
+function wildcardMatch(pattern, text) {
+  // wildcard_match(): case-insensitive, only "*" is special
+  const rx = pattern.trim().split("*").map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[\\s\\S]*");
+  return new RegExp("^" + rx + "$", "i").test(text);
+}
+
+function exclusionReason(intf, settings) {
+  // exclusion_reason(): type, unknown type, name pattern, VRF, shutdown
+  const kind = interfaceType(intf.name, settings.abbreviations);
+  const types = new Set((settings.excluded_types || []).map((t) => t.toLowerCase()));
+  if (kind && types.has(kind.toLowerCase())) return "type " + kind;
+  if (!kind && settings.exclude_unknown_types) return "unknown type";
+  for (const p of settings.exclude_patterns || []) {
+    if (p.trim() && wildcardMatch(p, intf.name)) return "pattern " + p.trim();
+  }
+  const vrfs = new Set((settings.exclude_vrfs || []).map((v) => v.trim().toLowerCase()).filter(Boolean));
+  if (intf.vrf && vrfs.has(intf.vrf.toLowerCase())) return "VRF " + intf.vrf;
+  if (intf.shutdown && settings.exclude_shutdown) return "shutdown";
+  return "";
+}
+
 function markDuplicates(records) {
   const names = new Map(), ips = new Map();
   for (const r of records) {
+    if (r.excluded) continue;
     if (r.is_record && r.fqdn) { const k = r.fqdn.toLowerCase(); if (!names.has(k)) names.set(k, []); names.get(k).push(r); }
     if (r.ip) { if (!ips.has(r.ip)) ips.set(r.ip, []); ips.get(r.ip).push(r); }
   }
@@ -1706,7 +1747,8 @@ function markDuplicates(records) {
 
 function defaultDnsSettings() {
   return { domain: "example.intra", include_secondary: false, exclude_shutdown: false, lowercase: false,
-           abbreviations: DEFAULT_ABBREVIATIONS.map((p) => p.slice()) };
+           abbreviations: DEFAULT_ABBREVIATIONS.map((p) => p.slice()),
+           excluded_types: [], exclude_unknown_types: false, exclude_patterns: [], exclude_vrfs: [] };
 }
 
 function buildRecords(files, settings) {
@@ -1716,24 +1758,26 @@ function buildRecords(files, settings) {
     for (const p of loaded.problems) result.problems.push((loaded.source ? loaded.source + ": " : "") + p);
     if (!loaded.hostname) { if (!loaded.problems.length) result.problems.push("no hostname line"); continue; }
     for (const intf of loaded.interfaces) {
-      if (intf.shutdown && settings.exclude_shutdown) continue;
+      const excluded = exclusionReason(intf, settings);
       const [short, sub, known] = shortInterfaceName(intf.name, settings.abbreviations);
       const dot1q = sub ? (intf.dot1q || sub) : "";
       const label = loaded.hostname + "_" + short + (dot1q ? "_" + dot1q : "");
       let secondaryNumber = 0;
       for (const address of intf.addresses) {
-        const warnings = [];
+        let warnings = [];
         if (intf.shutdown) warnings.push(STATUS.SHUTDOWN);
         if (address.secondary) { secondaryNumber++; warnings.push(STATUS.SECONDARY); }
         if (!known) warnings.push(STATUS.UNKNOWN_TYPE);
         if (sub && intf.dot1q && parseInt(sub, 10) !== parseInt(intf.dot1q, 10)) warnings.push(STATUS.DOT1Q);
-        const isRecord = !address.secondary || settings.include_secondary;
+        let isRecord = !address.secondary || settings.include_secondary;
         const suffix = address.secondary ? "-sec" + secondaryNumber : "";
         let fqdn = isRecord ? label + suffix + "." + settings.domain : "";
         if (settings.lowercase) fqdn = fqdn.toLowerCase();
         if (fqdn.split(".").some((part) => part.length > 63)) warnings.push(STATUS.TOO_LONG);
+        if (excluded) { warnings = []; isRecord = false; }
         result.records.push({ fqdn, ip: address.ip, device: loaded.hostname, interface: intf.name, dot1q,
-                              vrf: intf.vrf, warnings, is_record: isRecord, source: loaded.source });
+                              vrf: intf.vrf, warnings, is_record: isRecord, source: loaded.source, excluded,
+                              existing: "" });
       }
     }
   }
@@ -1741,12 +1785,18 @@ function buildRecords(files, settings) {
   return result;
 }
 
-const recordStatus = (r) => (r.warnings.length ? r.warnings.join("; ") : STATUS.OK);
-const recordRow = (r) => [r.fqdn || NOT_A_RECORD, r.ip, r.device, r.interface, r.dot1q, r.vrf, recordStatus(r)];
+const recordStatus = (r) => (r.excluded ? "excluded (" + r.excluded + ")" : r.warnings.length ? r.warnings.join("; ") : STATUS.OK);
+const recordRow = (r) => [((r.is_record || r.excluded) && r.fqdn) || NOT_A_RECORD, r.ip, r.device, r.interface, r.dot1q, r.vrf,
+                          recordStatus(r), r.existing || ""];
+const exported = (records) => records.filter((r) => !r.excluded);
 
 function summaryText(result) {
+  // the DNS check (nslookup) exists only in the Python app
   const devices = new Set(result.files.filter((f) => f.hostname).map((f) => f.hostname));
-  return `${result.records.filter((r) => r.is_record).length} records from ${devices.size} devices, ${result.records.filter((r) => r.warnings.length).length} warnings`;
+  let text = `${result.records.filter((r) => r.is_record).length} records from ${devices.size} devices, ${result.records.filter((r) => r.warnings.length).length} warnings`;
+  const excluded = result.records.filter((r) => r.excluded).length;
+  if (excluded) text += `, ${excluded} excluded`;
+  return text;
 }
 
 function tableSortKey(columnIndex, value) {
@@ -1769,7 +1819,7 @@ function csvField(v) {
 
 function toCsv(records) {
   // to_csv_bytes() without the BOM (added when saving)
-  const rows = [TABLE_COLUMNS, ...records.map(recordRow)];
+  const rows = [TABLE_COLUMNS, ...exported(records).map(recordRow)];
   return rows.map((row) => row.map(csvField).join(",") + "\r\n").join("");
 }
 
@@ -1777,7 +1827,7 @@ const singleLine = (v) => v.replace(/[\t\r\n]/g, " ");
 
 function toTsv(records, header = true) {
   const rows = header ? [TABLE_COLUMNS] : [];
-  rows.push(...records.map(recordRow));
+  rows.push(...exported(records).map(recordRow));
   return rows.map((row) => row.map(singleLine).join("\t") + "\n").join("");
 }
 
@@ -1789,7 +1839,7 @@ function psQuote(value) {
 function toPowershell(records, domain) {
   const lines = [];
   for (const r of records) {
-    if (!r.is_record) continue;
+    if (!r.is_record || r.excluded) continue;
     const suffix = "." + domain;
     const name = r.fqdn.toLowerCase().endsWith(suffix.toLowerCase()) ? r.fqdn.slice(0, -suffix.length) : r.fqdn;
     let line = `Add-DnsServerResourceRecordA -ZoneName ${psQuote(domain)} -Name ${psQuote(name)} -IPv4Address ${psQuote(r.ip)} -CreatePtr`;
@@ -1843,7 +1893,7 @@ function makeZip(files) {
 
 if (typeof module !== "undefined") {
   module.exports = { readWorkbook, generateConfigs, renderTemplate, parseConfig, buildRecords, shortInterfaceName,
-    defaultDnsSettings, summaryText, recordRow, toCsv, toTsv, toPowershell, tableSortKey, compareKeys, decodeText,
+    defaultDnsSettings, summaryText, recordRow, exclusionReason, interfaceType, wildcardMatch, toCsv, toTsv, toPowershell, tableSortKey, compareKeys, decodeText,
     ipNetwork, ipAddress, makeZip, unzip, pyFloatStr, PyFloat, norm, cellText, STATUS, TABLE_COLUMNS };
 }
 /* ENGINE END ================================================================ */
@@ -1906,7 +1956,15 @@ const TEXT = {
   optSecondary: "Give secondary addresses a record (-sec1, -sec2…)",
   optShutdown: "Leave out shutdown interfaces",
   optLower: "All lower case",
-  abbrTitle: "Interface abbreviations",
+  abbrTitle: "Interface types",
+  abbrRecord: "DNS record",
+  leaveOut: "Leave out (no DNS record)",
+  optUnknown: "Leave out interface types that are not in the table",
+  exclPatterns: "Interface names (comma separated, * = any characters, e.g. MgmtEth*, *.4094)",
+  exclVrfs: "VRFs (comma separated, e.g. Mgmt-intf)",
+  showExcluded: "Show left-out interfaces",
+  exclTypes: (t) => (t ? "Types left out: " + t : "Types left out: none (untick them in Interface types)"),
+  noDnsCheck: "Checking whether records already exist (nslookup) is only in the desktop app: a browser page cannot query DNS.",
   abbrAdd: "Add a row",
   abbrReset: "Restore defaults",
   abbrType: "Type in the config",
@@ -2253,17 +2311,39 @@ $("opt-secondary").onchange = (e) => { dnsSettings.include_secondary = e.target.
 $("opt-shutdown").onchange = (e) => { dnsSettings.exclude_shutdown = e.target.checked; persistDns(); if (dns.result) runDns(); };
 $("opt-lower").onchange = (e) => { dnsSettings.lowercase = e.target.checked; persistDns(); if (dns.result) runDns(); };
 
+const splitList = (text) => (text || "").split(/[,;]/).map((p) => p.trim()).filter(Boolean);
+$("opt-unknown").checked = !!dnsSettings.exclude_unknown_types;
+$("excl-patterns").value = (dnsSettings.exclude_patterns || []).join(", ");
+$("excl-vrfs").value = (dnsSettings.exclude_vrfs || []).join(", ");
+$("opt-unknown").onchange = (e) => { dnsSettings.exclude_unknown_types = e.target.checked; persistDns(); if (dns.result) runDns(); };
+$("excl-patterns").onchange = (e) => { dnsSettings.exclude_patterns = splitList(e.target.value); persistDns(); if (dns.result) runDns(); };
+$("excl-vrfs").onchange = (e) => { dnsSettings.exclude_vrfs = splitList(e.target.value); persistDns(); if (dns.result) runDns(); };
+$("show-excluded").onchange = () => { if (dns.result) renderDns(); };
+
+function isTypeIncluded(short) {
+  return !(dnsSettings.excluded_types || []).some((t) => t.toLowerCase() === (short || "").toLowerCase());
+}
+function setTypeIncluded(short, on) {
+  const others = (dnsSettings.excluded_types || []).filter((t) => t.toLowerCase() !== short.toLowerCase());
+  dnsSettings.excluded_types = on ? others : [...others, short];
+}
+
 function renderAbbr() {
   const body = $("abbr-rows");
-  body.replaceChildren(el("tr", {}, el("td", { class: "lbl", text: TEXT.abbrType }), el("td", { class: "lbl", text: TEXT.abbrShort }), el("td")));
+  body.replaceChildren(el("tr", {}, el("td", { class: "lbl", text: TEXT.abbrType }), el("td", { class: "lbl", text: TEXT.abbrShort }),
+    el("td", { class: "lbl", text: TEXT.abbrRecord }), el("td")));
   dnsSettings.abbreviations.forEach((pair, i) => {
-    const inp = (j) => el("input", { type: "text", value: pair[j], spellcheck: "false", oninput: (e) => { pair[j] = e.target.value.trim(); persistDns(); } });
-    body.append(el("tr", {}, el("td", {}, inp(0)), el("td", { style: "width:90px" }, inp(1)),
+    const inp = (j) => el("input", { type: "text", value: pair[j], spellcheck: "false", onchange: (e) => { pair[j] = e.target.value.trim(); persistDns(); renderAbbr(); } });
+    const box = el("input", { type: "checkbox", title: TEXT.abbrRecord, onchange: (e) => {
+      setTypeIncluded(pair[1], e.target.checked); persistDns(); renderAbbr(); if (dns.result) runDns(); } });
+    box.checked = isTypeIncluded(pair[1]);
+    body.append(el("tr", {}, el("td", {}, inp(0)), el("td", { style: "width:90px" }, inp(1)), el("td", { style: "text-align:center" }, box),
       el("td", {}, el("button", { class: "x", title: "Remove", onclick: () => { dnsSettings.abbreviations.splice(i, 1); persistDns(); renderAbbr(); } }, "×"))));
   });
+  $("excl-types").textContent = TEXT.exclTypes((dnsSettings.excluded_types || []).join(", "));
 }
 $("abbr-add").onclick = () => { dnsSettings.abbreviations.push(["", ""]); persistDns(); renderAbbr(); };
-$("abbr-reset").onclick = () => { dnsSettings.abbreviations = defaultDnsSettings().abbreviations; persistDns(); renderAbbr(); };
+$("abbr-reset").onclick = () => { dnsSettings.abbreviations = defaultDnsSettings().abbreviations; dnsSettings.excluded_types = []; persistDns(); renderAbbr(); };
 renderAbbr();
 
 async function addConfigFiles(fileList) {
@@ -2340,18 +2420,20 @@ function renderDns() {
     el("span", { style: "margin-left:auto", class: "row" },
       el("button", { class: "btn", onclick: async () => { const n = await saveFile("dns_records.csv", withBom(toCsv(sortedRecords())), "text/csv", "csv"); status(n ? TEXT.saved(n) : TEXT.cancelled); } }, TEXT.exportCsv),
       el("button", { class: "btn", onclick: async () => { const n = await saveFile("dns_records.ps1", withBom(toPowershell(sortedRecords(), dnsSettings.domain)), "text/plain", "ps1"); status(n ? TEXT.saved(n) : TEXT.cancelled); } }, TEXT.exportPs),
-      el("button", { class: "btn", onclick: async () => { const recs = sortedRecords(); if (await copyText(toTsv(recs))) status(TEXT.tableCopied(recs.length)); } }, TEXT.copyTable)))];
+      el("button", { class: "btn", onclick: async () => { const recs = sortedRecords(); if (await copyText(toTsv(recs))) status(TEXT.tableCopied(exported(recs).length)); } }, TEXT.copyTable)))];
   if (r.problems.length) kids.push(el("div", { class: "msg warn" }, el("h3", { text: TEXT.problems }), el("ul", {}, r.problems.map((p) => el("li", { text: p })))));
   const head = el("tr", {}, TABLE_COLUMNS.map((name, i) => el("th", {
     "aria-sort": dns.sort.col === i ? (dns.sort.dir > 0 ? "ascending" : "descending") : null,
     onclick: () => { dns.sort = { col: i, dir: dns.sort.col === i ? -dns.sort.dir : 1 }; renderDns(); },
   }, name)));
-  const rows = sortedRecords().map((rec) => {
+  const showExcluded = $("show-excluded").checked;
+  const rows = sortedRecords().filter((rec) => showExcluded || !rec.excluded).map((rec) => {
     const v = recordRow(rec);
     return el("tr", { class: rec.is_record ? "" : "norec" },
       el("td", { class: "fqdn", text: v[0] }), el("td", { text: v[1] }), el("td", { text: v[2] }), el("td", { text: v[3] }),
       el("td", { text: v[4] }), el("td", { text: v[5] }),
-      el("td", {}, el("span", { class: "status " + (rec.warnings.length ? "warn" : "ok"), text: v[6] })));
+      el("td", {}, el("span", { class: "status " + (rec.excluded ? "" : rec.warnings.length ? "warn" : "ok"), text: v[6] })),
+      el("td", { text: v[7] }));
   });
   kids.push(el("div", { class: "table-wrap" }, el("table", { class: "records" }, el("thead", {}, head), el("tbody", {}, rows))));
   w.replaceChildren(...kids);

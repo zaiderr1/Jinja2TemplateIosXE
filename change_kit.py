@@ -184,7 +184,7 @@ def kit_files(entries, domain):
     files = {}
     for e in entries:
         files.update(e.files)
-    records = [r for e in entries for r in e.dns]
+    records = dns_names.exported([r for e in entries for r in e.dns])
     if records:
         files["dns_records.csv"] = dns_names.to_csv_bytes(records)
         files["dns_records.ps1"] = dns_names.to_powershell(records, domain)

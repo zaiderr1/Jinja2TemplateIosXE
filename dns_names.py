@@ -34,7 +34,8 @@ STATUS_TOO_LONG = "name too long"
 STATUS_DOT1Q = "dot1q \u2260 sub-interface number"
 STATUS_UNKNOWN_TYPE = "unknown interface type"
 NOT_A_RECORD = "(not a record)"
-TABLE_COLUMNS = ("FQDN", "IPv4 address", "Device", "Interface", "dot1q", "VRF", "Status")
+TABLE_COLUMNS = ("FQDN", "IPv4 address", "Device", "Interface", "dot1q", "VRF", "Status",
+                 "Existing DNS")
 
 
 @dataclass
@@ -71,6 +72,11 @@ class DnsSettings:
     lowercase: bool = False
     abbreviations: List[Tuple[str, str]] = field(
         default_factory=lambda: list(DEFAULT_ABBREVIATIONS))
+    # Interfaces to leave out (no record, not in duplicates, never exported):
+    excluded_types: List[str] = field(default_factory=list)  # short names, e.g. ["Lo", "Tu"]
+    exclude_unknown_types: bool = False
+    exclude_patterns: List[str] = field(default_factory=list)  # "MgmtEth*", "*.4094"
+    exclude_vrfs: List[str] = field(default_factory=list)      # "Mgmt-intf"
 
 
 @dataclass
@@ -84,9 +90,15 @@ class DnsRecord:
     warnings: List[str] = field(default_factory=list)
     is_record: bool = True
     source: str = ""
+    excluded: str = ""        # reason, e.g. "type Lo"; "" = not excluded
+    existing: str = ""        # result of the DNS check (dns_check.py); "" = not checked
+    existing_kind: str = ""   # none / same / conflict / no answer / unknown
+    lookup_raw: str = ""      # raw nslookup output, in memory only
 
     @property
     def status(self):
+        if self.excluded:
+            return "excluded (" + self.excluded + ")"
         return "; ".join(self.warnings) if self.warnings else STATUS_OK
 
 
@@ -204,6 +216,43 @@ def find_text_files(folder, recursive=False):
     return sorted(found, key=lambda p: str(p).casefold())
 
 
+def interface_type(name, abbreviations):
+    """Short type of an interface ("Te" for TenGigE0/0/0/1), or "" when unknown."""
+    token = re.match(r"[A-Za-z]+(?:-[A-Za-z]+)*", name)
+    kind = token.group(0).casefold() if token else ""
+    for long_name, short_name in abbreviations:
+        if kind in (long_name.casefold(), short_name.casefold()):
+            return short_name
+    return ""
+
+
+def wildcard_match(pattern, text):
+    """Case-insensitive match where only "*" is special (any characters)."""
+    regex = ".*".join(re.escape(part) for part in pattern.strip().split("*"))
+    return re.fullmatch(regex, text, re.I | re.S) is not None
+
+
+def exclusion_reason(interface, settings):
+    """Why this interface gets no DNS record ("" = it gets one).
+
+    Checked in this order: type, unknown type, name pattern, VRF, shutdown."""
+    kind = interface_type(interface.name, settings.abbreviations)
+    excluded_types = {t.casefold() for t in settings.excluded_types}
+    if kind and kind.casefold() in excluded_types:
+        return "type " + kind
+    if not kind and settings.exclude_unknown_types:
+        return "unknown type"
+    for pattern in settings.exclude_patterns:
+        if pattern.strip() and wildcard_match(pattern, interface.name):
+            return "pattern " + pattern.strip()
+    vrfs = {v.strip().casefold() for v in settings.exclude_vrfs if v.strip()}
+    if interface.vrf and interface.vrf.casefold() in vrfs:
+        return "VRF " + interface.vrf
+    if interface.shutdown and settings.exclude_shutdown:
+        return "shutdown"
+    return ""
+
+
 def short_interface_name(name, abbreviations):
     """Return (sanitized short name, sub-interface number, known type)."""
     sub = re.search(r"\.(\d+)$", name)
@@ -229,6 +278,8 @@ def mark_duplicates(records):
     """Mark every member of each duplicate group, across all sources."""
     names, ips = {}, {}
     for record in records:
+        if record.excluded:
+            continue
         if record.is_record and record.fqdn:
             names.setdefault(record.fqdn.casefold(), []).append(record)
         if record.ip:
@@ -253,8 +304,7 @@ def build_records(files, settings=None):
                 result.problems.append("no hostname line")
             continue
         for interface in loaded.interfaces:
-            if interface.shutdown and settings.exclude_shutdown:
-                continue
+            excluded = exclusion_reason(interface, settings)
             short, sub, known = short_interface_name(interface.name, settings.abbreviations)
             dot1q = (interface.dot1q or sub) if sub else ""
             label = loaded.hostname + "_" + short + ("_" + dot1q if dot1q else "")
@@ -277,23 +327,43 @@ def build_records(files, settings=None):
                     fqdn = fqdn.lower()
                 if any(len(part) > 63 for part in fqdn.split(".")):
                     warnings.append(STATUS_TOO_LONG)
+                if excluded:
+                    warnings, is_record = [], False
                 result.records.append(DnsRecord(
                     fqdn, address.ip, loaded.hostname, interface.name, dot1q,
-                    interface.vrf, warnings, is_record, loaded.source))
+                    interface.vrf, warnings, is_record, loaded.source, excluded))
     mark_duplicates(result.records)
     return result
 
 
 def record_row(record):
-    return (record.fqdn or NOT_A_RECORD, record.ip, record.device,
-            record.interface, record.dot1q, record.vrf, record.status)
+    fqdn = record.fqdn if (record.is_record or record.excluded) else ""
+    return (fqdn or NOT_A_RECORD, record.ip, record.device,
+            record.interface, record.dot1q, record.vrf, record.status, record.existing)
+
+
+def exported(records):
+    """Records that exports may contain: everything except excluded interfaces."""
+    return [r for r in records if not r.excluded]
 
 
 def summary_text(result):
     devices = {item.hostname for item in result.files if item.hostname}
-    return "{} records from {} devices, {} warnings".format(
+    text = "{} records from {} devices, {} warnings".format(
         sum(r.is_record for r in result.records), len(devices),
         sum(bool(r.warnings) for r in result.records))
+    excluded = sum(bool(r.excluded) for r in result.records)
+    if excluded:
+        text += ", {} excluded".format(excluded)
+    checked = [r for r in result.records if r.existing_kind]
+    if checked:
+        count = {k: sum(r.existing_kind == k for r in checked)
+                 for k in ("none", "same", "conflict", "no answer", "unknown")}
+        text += (" - DNS check: {none} to create, {same} already correct, {conflict} "
+                 "conflicts, {no answer} no answer").format(**count)
+        if count["unknown"]:
+            text += ", {} unknown".format(count["unknown"])
+    return text
 
 
 def table_sort_key(column_index, value):
@@ -311,7 +381,7 @@ def to_csv_bytes(records, delimiter=","):
     output = io.StringIO(newline="")
     writer = csv.writer(output, delimiter=delimiter, lineterminator="\r\n")
     writer.writerow(TABLE_COLUMNS)
-    writer.writerows(record_row(r) for r in records)
+    writer.writerows(record_row(r) for r in exported(records))
     return output.getvalue().encode("utf-8-sig")
 
 
@@ -321,7 +391,7 @@ def _single_line(value):
 
 def to_tsv(records, header=True):
     rows = [TABLE_COLUMNS] if header else []
-    rows.extend(record_row(r) for r in records)
+    rows.extend(record_row(r) for r in exported(records))
     return "".join("\t".join(_single_line(v) for v in row) + "\n" for row in rows)
 
 
@@ -331,11 +401,24 @@ def _powershell_quote(value):
     return '"' + value.replace("\r", "`r").replace("\n", "`n") + '"'
 
 
+# What the DNS check (dns_check.py) does to a PowerShell line.
+CHECK_COMMENT = {
+    "same": "already in DNS",
+    "conflict": "conflict",
+    "no answer": "not checked (no answer)",
+    "unknown": "check manually",
+}
+
+
 def to_powershell(records, domain):
-    """Return CRLF commands; warning rows remain reviewable comments."""
+    """Return CRLF commands; warning rows remain reviewable comments.
+
+    After a DNS check, only records whose Existing DNS is "none" stay active;
+    the others become comments saying why. Nothing ever removes or changes an
+    existing record."""
     lines = []
     for record in records:
-        if not record.is_record:
+        if not record.is_record or record.excluded:
             continue
         suffix = "." + domain
         name = record.fqdn[:-len(suffix)] if record.fqdn.lower().endswith(suffix.lower()) else record.fqdn
@@ -343,8 +426,11 @@ def to_powershell(records, domain):
                 "-IPv4Address {} -CreatePtr").format(
                     _powershell_quote(domain), _powershell_quote(name),
                     _powershell_quote(record.ip))
-        if record.warnings:
-            line = "# " + line + "  # " + _single_line(record.status)
+        reasons = list(record.warnings)
+        if record.existing_kind in CHECK_COMMENT:
+            reasons.append(CHECK_COMMENT[record.existing_kind] + ": " + record.existing)
+        if reasons:
+            line = "# " + line + "  # " + _single_line("; ".join(reasons))
         lines.append(line)
     return "".join(line + "\r\n" for line in lines)
 
@@ -359,12 +445,39 @@ def main(argv=None):
     parser.add_argument("--lowercase", action="store_true")
     parser.add_argument("--include-secondary", action="store_true")
     parser.add_argument("--exclude-shutdown", action="store_true")
+    parser.add_argument("--exclude-type", action="append", default=[], metavar="TYPE",
+                        help="interface type to leave out, e.g. Lo or Loopback (repeatable)")
+    parser.add_argument("--exclude-unknown-types", action="store_true")
+    parser.add_argument("--exclude-interface", action="append", default=[],
+                        metavar="PATTERN", help="interface name pattern, * = any "
+                        "characters, e.g. MgmtEth* or *.4094 (repeatable)")
+    parser.add_argument("--exclude-vrf", action="append", default=[], metavar="VRF",
+                        help="leave out the interfaces of this VRF (repeatable)")
+    parser.add_argument("--check-dns", action="store_true",
+                        help="ask DNS (nslookup) whether each record already exists")
+    parser.add_argument("--dns-server", default="", help="DNS server for --check-dns "
+                        "(default: the computer's DNS server)")
+    parser.add_argument("--no-forward", action="store_true",
+                        help="with --check-dns: only reverse (PTR) lookups")
     args = parser.parse_args(argv)
     settings = DnsSettings(args.domain, args.include_secondary,
                            args.exclude_shutdown, args.lowercase)
+    settings.excluded_types = [interface_type(t + "0", settings.abbreviations) or t
+                               for t in args.exclude_type]
+    settings.exclude_unknown_types = args.exclude_unknown_types
+    settings.exclude_patterns = list(args.exclude_interface)
+    settings.exclude_vrfs = list(args.exclude_vrf)
     result = build_records([load_file(path) for path in args.files], settings)
     for problem in result.problems:
         print(problem, file=sys.stderr)
+    if args.check_dns:
+        import dns_check     # only needed (and only touches the network) here
+        try:
+            dns_check.check_records(result.records, args.dns_server,
+                                    forward=not args.no_forward)
+        except ValueError as error:
+            print("Cannot check DNS: " + str(error), file=sys.stderr)
+            return 1
     try:
         if args.csv:
             Path(args.csv).write_bytes(to_csv_bytes(result.records))

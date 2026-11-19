@@ -48,10 +48,10 @@ interface Vlan10
         decoded = payload.decode("utf-8-sig")
         rows = list(csv.reader(io.StringIO(decoded, newline="")))
         self.assertEqual(tuple(rows[0]), dns.TABLE_COLUMNS)
-        self.assertEqual(len(rows[0]), 7)
+        self.assertEqual(len(rows[0]), 8)
         self.assertEqual(len(rows), len(self.result.records) + 1)
         self.assertEqual(rows[-1][0], dns.NOT_A_RECORD)
-        self.assertIn("secondary", rows[-1][-1])
+        self.assertIn("secondary", rows[-1][-2])
 
     def test_tsv_has_header_and_sanitizes_tabs_and_newlines(self):
         record = dns.DnsRecord("CE01_Lo0.example.intra", "203.0.113.4", "CE01\tPE01",
@@ -59,7 +59,7 @@ interface Vlan10
         rows = dns.to_tsv([record]).splitlines()
         self.assertEqual(rows[0].split("\t"), list(dns.TABLE_COLUMNS))
         self.assertEqual(rows[1].split("\t")[2:4], ["CE01 PE01", "Loopback0 Injected"])
-        self.assertEqual(len(rows[1].split("\t")), 7)
+        self.assertEqual(len(rows[1].split("\t")), 8)
 
 
 if __name__ == "__main__":

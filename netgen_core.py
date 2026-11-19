@@ -212,8 +212,28 @@ def default_settings():
             "exclude_shutdown": False,
             "lowercase": False,
             "abbreviations": [[a, b] for a, b in dns_names.DEFAULT_ABBREVIATIONS],
+            # Interfaces left out of DNS (settings, not network data). The DNS
+            # server typed for the check is NOT saved: it stays for the session.
+            "excluded_types": [],
+            "exclude_unknown_types": False,
+            "exclude_patterns": [],
+            "exclude_vrfs": [],
+            "check_forward": True,
         },
     }
+
+
+def _string_list(value, limit=100, length=100):
+    """A list of short non-empty strings, or None when the value is not one."""
+    if not isinstance(value, list):
+        return None
+    out = []
+    for item in value[:limit]:
+        if isinstance(item, str) and item.strip() and len(item) <= length \
+                and "\n" not in item and "\r" not in item:
+            if item.strip() not in out:
+                out.append(item.strip())
+    return out
 
 
 def _is_valid_domain(d):
@@ -302,6 +322,12 @@ def _filter_settings(data):
         abbrs = _validate_abbreviations(dns_sec.get("abbreviations"))
         if abbrs is not None:
             clean["dns"]["abbreviations"] = abbrs
+        for key in ("excluded_types", "exclude_patterns", "exclude_vrfs"):
+            values = _string_list(dns_sec.get(key))
+            if values is not None:
+                clean["dns"][key] = values
+        clean["dns"]["exclude_unknown_types"] = bool(dns_sec.get("exclude_unknown_types"))
+        clean["dns"]["check_forward"] = bool(dns_sec.get("check_forward", True))
 
     return clean
 

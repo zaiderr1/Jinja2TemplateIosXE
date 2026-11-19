@@ -77,23 +77,73 @@ one config. Files without a hostname are reported and skipped. Set the domain
 (the default `example.intra` is a placeholder: type your own domain once, it is
 remembered in the settings saved next to the program), choose whether to include secondary addresses,
 exclude shutdown interfaces, or lowercase names, and edit the interface
-abbreviation table with **Abbreviations...**. Generate names to preview the
-sortable FQDN, IPv4, device, interface, dot1q, VRF, and status columns.
+types with **Interface types...**. Generate names to preview the
+sortable FQDN, IPv4, device, interface, dot1q, VRF, status and Existing DNS columns.
 Warnings include shutdown, secondary, duplicate name/IP, name too long, dot1q
 mismatch, and unknown interface type. **Export CSV...** writes UTF-8 with BOM;
 **Export PowerShell...** writes `Add-DnsServerResourceRecordA` commands for
 clean records and commented commands for warnings; **Copy table** copies TSV.
-Exports happen only after choosing a destination. The standalone DNS command
-is:
+Exports happen only after choosing a destination.
+
+### Leaving interfaces out
+
+Three rules, any of which leaves an interface out (no record, not counted in
+duplicates, not checked in DNS, never exported):
+
+| Rule | Where | Example |
+|---|---|---|
+| By type | **Interface types...**: double-click the *DNS record* column (or *Include / leave out*) | leave out `Lo` = every Loopback. TenGigE and TenGigabitEthernet share `Te`, so they go together. Option: leave out types that are not in the table. |
+| By interface name | *Interface names*, comma separated, `*` = any characters, case-insensitive | `MgmtEth*, *.4094, Tunnel1*` |
+| By VRF | *VRFs*, comma separated | `Mgmt-intf` |
+
+Tick **Show left-out interfaces** to see them greyed out with the reason, e.g.
+`excluded (type Lo)`, `excluded (pattern *.4094)`, `excluded (VRF Mgmt-intf)`.
+The rules are saved with the other DNS settings and also apply to the DNS
+records of the [change kit](#change-kit).
+
+### Checking existing DNS records
+
+**Check existing DNS** asks DNS, record by record, with the Windows `nslookup`
+command (read-only: nothing is created, changed or deleted):
+
+- a reverse lookup of the IP: `nslookup -type=PTR <ip> [server]`;
+- if *Also check the generated names* is ticked, a lookup of the name:
+  `nslookup -type=A <name>. [server]`.
+
+*DNS server* empty = the computer's own DNS server. Up to 8 lookups run at the
+same time, 5 seconds each at most; **Cancel** stops starting new ones. The
+server you type is not saved. Double-click a row to see the raw `nslookup`
+output. English and French Windows outputs are understood.
+
+| Existing DNS | Meaning | In the PowerShell export |
+|---|---|---|
+| *(empty)* | not in DNS | active `Add-...` line |
+| `same` | the PTR and the name already match | comment: already in DNS |
+| `PTR: <name>` | the IP already has another name | comment: conflict |
+| `multiple PTR: ...` | the IP has several names | comment: conflict |
+| `name -> <ip>` | the name already points elsewhere | comment: conflict |
+| `A only (no PTR)` / `PTR only (no A)` | half of the record exists | comment: conflict |
+| `no answer` | timeout, server unreachable, no nslookup | comment: not checked |
+| `unknown` | output not understood | comment: check manually |
+
+The summary line then shows how many records are to create, already correct,
+in conflict, or without answer. The browser page (`netgen.html`) has the
+exclusions but not the DNS check: a page opened from a file cannot query DNS.
+
+Command line (`--exclude-*` options can be repeated):
 
 ```
-python dns_names.py <files...> --domain example.intra --csv out.csv
+python dns_names.py <files...> --domain example.intra --csv out.csv --powershell out.ps1 \
+    --exclude-type Loopback --exclude-interface "MgmtEth*" --exclude-vrf Mgmt-intf \
+    --check-dns [--dns-server 192.0.2.53] [--no-forward]
+python dns_check.py 192.0.2.1 CE01_Lo0.example.intra      # try one record by hand
 ```
 
 Both tools work offline. Workbook and running-config contents are kept in
 memory; only explicit Save/Export actions write output files. The adjacent
 `netgen_gui_settings.json` stores window size, last-used folders, strict mode,
-DNS options, domain, and abbreviations. It does not store workbook/config
+DNS options, domain, abbreviations and the rules for leaving interfaces out.
+It does not store the DNS server typed for the check, workbook/config
 contents, hostnames, IP addresses, or loaded-file history. The test command is:
 
 ```
@@ -165,7 +215,7 @@ own runbooks (a custom template folder may have its own `checks.j2`).
 `netgen.html` does the same two jobs as the Tkinter window (Config generator and DNS names) in your web browser. It is a single file: double-click it, Edge or Chrome opens it. Nothing to install, no Python needed, no server, no network: a security rule inside the page blocks every network request, and nothing is saved unless you click Save or Export.
 
 - **Config generator**: Browse… (or drop) the Excel file, then Generate. The file is read again at every Generate (Ctrl+Enter), so you can edit it in Excel and regenerate. Template folder: optional, pick a draft folder made by `conf2jinja.py`. Save .cfg… opens a save dialog; Save all… writes every config into a folder you choose (and asks before overwriting), or downloads a `configs.zip` if the browser can't write to a folder.
-- **DNS names**: same rules, options and exports as `dns_names.py` (CSV with BOM, PowerShell, Copy table). The options and the abbreviation table are remembered in the browser (they never contain configurations, IPs or hostnames).
+- **DNS names**: same rules, options, exclusions and exports as `dns_names.py` (CSV with BOM, PowerShell, Copy table), but no check of existing records (a page cannot query DNS). The options, the interface types and the exclusion rules are remembered in the browser (they never contain configurations, IPs or hostnames).
 
 The page carries its own copy of `templates/`. **After changing a template, run `python build_html.py`** to copy it into `netgen.html` (`tests/test_html.py` fails until you do). The page reproduces `generate.py` and `dns_names.py` in JavaScript: when you change a rule in one of them, the same change must be made in the engine part of `netgen.html` (each function names the Python function it copies).
 
@@ -399,6 +449,7 @@ the dictionary built in `add_side()`, and use it in a template.
 ├── change_kit.py            Excel → config + rollback + checks + DNS per device
 ├── dependencies.py          what a config uses but doesn't create (route-maps...)
 ├── dns_names.py             running-configs → DNS records
+├── dns_check.py             read-only nslookup check: does each record already exist?
 ├── netgen_gui.py(w)         desktop window (Tkinter); netgen_core.py its backend
 ├── netgen.html              the generator and DNS tool in a browser page
 ├── netgen_input.xlsx        input workbook with a fictional example (README sheet inside)

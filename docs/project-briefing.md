@@ -71,7 +71,8 @@ running-config ───────────────► Jinja2 templates
 | `dependencies.py` | lists what a config uses but doesn't create |
 | `rollback.py` | running-config before + change → rollback |
 | `change_kit.py` | per device: config, rollback, checks, DNS records |
-| `dns_names.py` | running-configs → DNS A records (CSV / PowerShell) |
+| `dns_names.py` | running-configs → DNS A records (CSV / PowerShell), with exclusions |
+| `dns_check.py` | read-only nslookup check: does each record already exist? |
 | `netgen_core.py` | GUI backend (no Tk): load/generate, save, preferences, background jobs |
 | `netgen_gui.py` / `.pyw` | Tkinter desktop window, 3 tabs |
 | `netgen.html` + `build_html.py` | same generator + DNS tool in one offline HTML page (JavaScript port) |
@@ -209,6 +210,8 @@ Every generated config starts with a comment-only block:
   - exclude shutdown interfaces;
   - lowercase.
 - **Warnings:** shutdown, secondary, duplicate name or IP, name too long, dot1q ≠ sub-interface number, unknown interface type.
+- **Leaving interfaces out:** by type (a *DNS record* tick per abbreviation; unknown types optional), by interface-name pattern (`*` wildcard) and by VRF. Excluded interfaces get no record, don't count in duplicates and are never exported; they can be shown greyed out with the reason.
+- **Existing DNS check** (`dns_check.py`, desktop app and `--check-dns` only): read-only `nslookup` PTR + A per record (8 in parallel, 5 s timeout, argument list, validated values, English/French output). Results: to create / same / conflict (other PTR, several PTR, name elsewhere, half record) / no answer / unknown. The PowerShell export keeps only records to create as active lines.
 - **Exports:**
   - CSV (UTF-8 with BOM);
   - PowerShell `Add-DnsServerResourceRecordA ... -CreatePtr` (warnings as commented lines; UTF-8 BOM, CRLF);
@@ -330,9 +333,6 @@ Every generated config starts with a comment-only block:
 
 ## 8. Known gaps / status
 
-- `docs/netgen-gui-prompt.md` specifies two DNS features that **aren't implemented yet**:
-  - an `nslookup` check per IP (does a record already exist?);
-  - exclusion of chosen interface types.
 - IPv4 only. The `Vlan` column is unused.
 - The IOS-XR templates haven't been tested on a real router.
 - `conf2jinja.py` reads IOS-XE only.

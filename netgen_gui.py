@@ -23,11 +23,14 @@ Run with:  python netgen_gui.py   (or double-click netgen_gui.pyw)
 """
 
 import os
+import re
+import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 import change_kit
+import dns_check
 import dns_names
 import netgen_core
 import rollback
@@ -139,7 +142,29 @@ TEXT = {
     "opt_secondary": "Give secondary addresses a record (-sec1, -sec2...)",
     "opt_shutdown": "Leave out shutdown interfaces",
     "opt_lower": "All lower case",
-    "abbrev_button": "Abbreviations...",
+    "abbrev_button": "Interface types...",
+    "leave_out": "Leave out (no DNS record):",
+    "excl_patterns": "Interface names:",
+    "excl_patterns_hint": "comma separated, * = any characters, e.g. MgmtEth*, *.4094",
+    "excl_vrfs": "VRFs:",
+    "excl_vrfs_hint": "comma separated, e.g. Mgmt-intf",
+    "opt_unknown": "Leave out interface types that are not in the table",
+    "excl_types_n": "Types left out: {types}",
+    "excl_types_none": "Types left out: none (choose in Interface types...)",
+    "show_excluded": "Show left-out interfaces",
+    "regen_needed": "Settings changed: click Generate DNS names again.",
+    "check_dns": "Check existing DNS",
+    "dns_server": "DNS server:",
+    "dns_server_hint": "(empty = this computer's DNS server)",
+    "check_forward": "Also check the generated names",
+    "check_running": "Checking DNS: {done} / {total}",
+    "check_done": "DNS check done ({n} record(s)).",
+    "check_cancelled": "DNS check cancelled after {n} record(s).",
+    "check_nothing": "No record to check: generate DNS names first.",
+    "check_bad_server": "DNS server not valid: {err}",
+    "check_info": "The check only asks DNS (nslookup); it never creates or changes records.",
+    "raw_title": "nslookup output",
+    "raw_none": "This row has not been checked.",
     "generate_dns": "Generate DNS names",
     "pick_configs": "Choose running-config files",
     "config_types": "Text files",
@@ -160,9 +185,14 @@ TEXT = {
     "dns_working": "Generating DNS names...",
 
     # --- Abbreviation editor ---
-    "abbrev_title": "Interface abbreviations",
+    "abbrev_title": "Interface types",
     "abbrev_type": "Interface type in the config",
     "abbrev_short": "Abbreviation",
+    "abbrev_include": "DNS record",
+    "abbrev_toggle": "Include / leave out",
+    "abbrev_hint": "Double-click the 'DNS record' column, or use the button, to leave a type out.",
+    "yes_mark": "yes",
+    "no_mark": "left out",
     "add": "Add...",
     "edit": "Change...",
     "reset": "Reset to defaults",
@@ -246,7 +276,23 @@ def dns_settings_from_prefs(prefs):
         exclude_shutdown=bool(d.get("exclude_shutdown")),
         lowercase=bool(d.get("lowercase")),
         abbreviations=[tuple(p) for p in d.get("abbreviations")
-                       or dns_names.DEFAULT_ABBREVIATIONS])
+                       or dns_names.DEFAULT_ABBREVIATIONS],
+        excluded_types=list(d.get("excluded_types") or []),
+        exclude_unknown_types=bool(d.get("exclude_unknown_types")),
+        exclude_patterns=list(d.get("exclude_patterns") or []),
+        exclude_vrfs=list(d.get("exclude_vrfs") or []))
+
+
+def split_list(text):
+    """'MgmtEth*, *.4094' -> ['MgmtEth*', '*.4094'] (commas or semicolons)."""
+    return [p.strip() for p in re.split(r"[,;]", text or "") if p.strip()]
+
+
+def check_dns(records, server, forward, cancel, progress):
+    """Worker function: read-only DNS check of the records (dns_check.py).
+    Returns how many records were checked."""
+    return dns_check.check_records(records, server, forward=forward, cancel=cancel,
+                                   progress=progress)
 
 
 def load_paths(paths):
@@ -781,35 +827,46 @@ class GeneratorTab(ttk.Frame):
 # Abbreviation editor (modal dialog)
 # ---------------------------------------------------------------------------
 class AbbreviationDialog(tk.Toplevel):
-    """Edit the interface-type -> abbreviation table. result = list or None."""
+    """Edit the interface types: abbreviation, and whether they get a DNS record.
 
-    def __init__(self, master, pairs):
+    result = (pairs, excluded short names) or None when cancelled. A type is
+    left out by its abbreviation, so TenGigE and TenGigabitEthernet (both "Te")
+    are included or left out together."""
+
+    def __init__(self, master, pairs, excluded_types=()):
         super().__init__(master)
         self.title(TEXT["abbrev_title"])
         self.transient(master.winfo_toplevel())
         self.result = None
-        self.geometry("460x420")
-        self.minsize(380, 300)
+        self.excluded = {t.casefold() for t in excluded_types}
+        self.geometry("560x460")
+        self.minsize(440, 320)
 
         body = ttk.Frame(self, padding=8)
         body.pack(fill="both", expand=True)
-        self.tree = ttk.Treeview(body, columns=("type", "abbr"), show="headings",
+        ttk.Label(body, text=TEXT["abbrev_hint"], foreground=GREY).grid(
+            row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        self.tree = ttk.Treeview(body, columns=("type", "abbr", "incl"), show="headings",
                                  selectmode="browse")
         self.tree.heading("type", text=TEXT["abbrev_type"])
         self.tree.heading("abbr", text=TEXT["abbrev_short"])
-        self.tree.column("type", width=260)
-        self.tree.column("abbr", width=120)
+        self.tree.heading("incl", text=TEXT["abbrev_include"])
+        self.tree.column("type", width=240)
+        self.tree.column("abbr", width=100)
+        self.tree.column("incl", width=90)
+        self.tree.tag_configure("out", foreground=GREY)
         ys = ttk.Scrollbar(body, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=ys.set)
         self.tree.grid(row=0, column=0, sticky="nsew")
         ys.grid(row=0, column=1, sticky="ns")
         body.rowconfigure(0, weight=1)
         body.columnconfigure(0, weight=1)
-        self.tree.bind("<Double-1>", lambda e: self._edit())
+        self.tree.bind("<Double-1>", self._double_click)
 
         side = ttk.Frame(body)
         side.grid(row=0, column=2, sticky="n", padx=(6, 0))
         for key, cmd in (("add", self._add), ("edit", self._edit),
+                         ("abbrev_toggle", self._toggle),
                          ("remove", self._remove), ("reset", self._reset)):
             ttk.Button(side, text=TEXT[key], command=cmd).pack(fill="x", pady=2)
 
@@ -825,10 +882,37 @@ class AbbreviationDialog(tk.Toplevel):
     def _fill(self, pairs):
         self.tree.delete(*self.tree.get_children())
         for long_name, short in pairs:
-            self.tree.insert("", "end", values=(long_name, short))
+            self.tree.insert("", "end", values=(long_name, short, ""))
+        self._refresh_marks()
+
+    def _refresh_marks(self):
+        """Show, on every row, whether its abbreviation is left out."""
+        for iid in self.tree.get_children():
+            long_name, short = self.tree.item(iid, "values")[:2]
+            out = short.casefold() in self.excluded
+            self.tree.item(iid, values=(long_name, short,
+                                        TEXT["no_mark"] if out else TEXT["yes_mark"]),
+                           tags=("out",) if out else ())
 
     def _pairs(self):
-        return [tuple(self.tree.item(i, "values")) for i in self.tree.get_children()]
+        return [tuple(self.tree.item(i, "values"))[:2] for i in self.tree.get_children()]
+
+    def _double_click(self, event):
+        if self.tree.identify_column(event.x) == "#3":
+            self._toggle()
+        else:
+            self._edit()
+
+    def _toggle(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        short = self.tree.item(sel[0], "values")[1].casefold()
+        if short in self.excluded:
+            self.excluded.discard(short)
+        else:
+            self.excluded.add(short)
+        self._refresh_marks()
 
     def _ask_row(self, long_name="", short=""):
         """Small dialog with two fields; returns (type, abbr) or None."""
@@ -877,7 +961,8 @@ class AbbreviationDialog(tk.Toplevel):
             if self._exists(row[0]):
                 messagebox.showwarning(TEXT["abbrev_title"], TEXT["abbrev_dup"], parent=self)
                 return
-            iid = self.tree.insert("", "end", values=row)
+            iid = self.tree.insert("", "end", values=row + ("",))
+            self._refresh_marks()
             self.tree.selection_set(iid)
             self.tree.see(iid)
 
@@ -891,17 +976,23 @@ class AbbreviationDialog(tk.Toplevel):
             if self._exists(row[0], ignore_iid=sel[0]):
                 messagebox.showwarning(TEXT["abbrev_title"], TEXT["abbrev_dup"], parent=self)
                 return
-            self.tree.item(sel[0], values=row)
+            self.tree.item(sel[0], values=row + ("",))
+            self._refresh_marks()
 
     def _remove(self):
         for iid in self.tree.selection():
             self.tree.delete(iid)
 
     def _reset(self):
+        self.excluded = set()
         self._fill(dns_names.DEFAULT_ABBREVIATIONS)
 
     def _ok(self):
-        self.result = [list(p) for p in self._pairs()]
+        pairs = [list(p) for p in self._pairs()]
+        shorts = {}
+        for _, short in pairs:                 # keep the table's spelling
+            shorts.setdefault(short.casefold(), short)
+        self.result = (pairs, sorted(shorts[t] for t in self.excluded if t in shorts))
         self.destroy()
 
 
@@ -927,6 +1018,16 @@ class DnsTab(ttk.Frame):
         self.lower_var = tk.BooleanVar(value=bool(d.get("lowercase")))
         self.abbreviations = [list(p) for p in (d.get("abbreviations")
                                                 or dns_names.DEFAULT_ABBREVIATIONS)]
+        self.excluded_types = list(d.get("excluded_types") or [])
+        self.unknown_var = tk.BooleanVar(value=bool(d.get("exclude_unknown_types")))
+        self.patterns_var = tk.StringVar(value=", ".join(d.get("exclude_patterns") or []))
+        self.vrfs_var = tk.StringVar(value=", ".join(d.get("exclude_vrfs") or []))
+        self.types_var = tk.StringVar()
+        self.show_excluded_var = tk.BooleanVar(value=False)
+        self.server_var = tk.StringVar()          # not saved: session only
+        self.forward_var = tk.BooleanVar(value=bool(d.get("check_forward", True)))
+        self.check_cancel = None                  # threading.Event while checking
+        self.check_progress = [0, 0]              # done, total (written by workers)
 
         paned = ttk.PanedWindow(self, orient="horizontal")
         paned.pack(fill="both", expand=True)
@@ -990,8 +1091,27 @@ class DnsTab(ttk.Frame):
             ttk.Checkbutton(opts, text=TEXT[key], variable=var,
                             command=self.app.save_prefs_quietly).grid(
                 row=r, column=0, columnspan=2, sticky="w")
-        bl = ttk.Frame(opts)
-        bl.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        out = ttk.LabelFrame(box, text=TEXT["leave_out"], padding=6)
+        out.pack(fill="x", pady=(6, 0))
+        out.columnconfigure(1, weight=1)
+        ttk.Label(out, textvariable=self.types_var, foreground=GREY, wraplength=320,
+                  justify="left").grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(out, text=TEXT["opt_unknown"], variable=self.unknown_var,
+                        command=self._settings_changed).grid(
+            row=1, column=0, columnspan=2, sticky="w")
+        for r, (key, hint, var) in enumerate((
+                ("excl_patterns", "excl_patterns_hint", self.patterns_var),
+                ("excl_vrfs", "excl_vrfs_hint", self.vrfs_var)), start=2):
+            ttk.Label(out, text=TEXT[key]).grid(row=r * 2, column=0, sticky="w")
+            entry = ttk.Entry(out, textvariable=var)
+            entry.grid(row=r * 2, column=1, sticky="ew", padx=4)
+            entry.bind("<FocusOut>", lambda e: self._settings_changed())
+            ttk.Label(out, text=TEXT[hint], foreground=GREY).grid(
+                row=r * 2 + 1, column=1, sticky="w", padx=4)
+        self._show_types()
+
+        bl = ttk.Frame(box)
+        bl.pack(fill="x", pady=(6, 0))
         ttk.Button(bl, text=TEXT["abbrev_button"], command=self._edit_abbreviations).pack(side="left")
         self.gen_button = ttk.Button(bl, text=TEXT["generate_dns"], command=self.generate)
         self.gen_button.pack(side="right")
@@ -1009,7 +1129,7 @@ class DnsTab(ttk.Frame):
         tf.pack(fill="both", expand=True, pady=(2, 4))
         cols = [str(i) for i in range(len(dns_names.TABLE_COLUMNS))]
         self.table = ttk.Treeview(tf, columns=cols, show="headings", selectmode="extended")
-        widths = (260, 110, 80, 170, 55, 90, 160)
+        widths = (260, 110, 80, 170, 55, 90, 160, 170)
         for i, title in enumerate(dns_names.TABLE_COLUMNS):
             self.table.heading(str(i), text=title,
                                command=lambda c=i: self._sort_by(c))
@@ -1018,6 +1138,9 @@ class DnsTab(ttk.Frame):
         self.table.tag_configure("ok", foreground=GREEN)
         self.table.tag_configure("warn", foreground=AMBER)
         self.table.tag_configure("norecord", foreground=GREY)
+        self.table.tag_configure("excluded", foreground=GREY, background="#f0f0f0")
+        self.table.tag_configure("conflict", foreground=RED)
+        self.table.bind("<Double-1>", lambda e: self._show_lookup())
         ys = ttk.Scrollbar(tf, orient="vertical", command=self.table.yview)
         xs = ttk.Scrollbar(tf, orient="horizontal", command=self.table.xview)
         self.table.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
@@ -1026,6 +1149,25 @@ class DnsTab(ttk.Frame):
         xs.grid(row=1, column=0, sticky="ew")
         tf.rowconfigure(0, weight=1)
         tf.columnconfigure(0, weight=1)
+
+        ttk.Checkbutton(box, text=TEXT["show_excluded"], variable=self.show_excluded_var,
+                        command=self._fill_table).pack(anchor="w")
+
+        cf = ttk.LabelFrame(box, text=TEXT["check_dns"], padding=6)
+        cf.pack(fill="x", pady=(2, 4))
+        ttk.Label(cf, text=TEXT["dns_server"]).pack(side="left")
+        ttk.Entry(cf, textvariable=self.server_var, width=18).pack(side="left", padx=4)
+        ttk.Label(cf, text=TEXT["dns_server_hint"], foreground=GREY).pack(side="left")
+        ttk.Checkbutton(cf, text=TEXT["check_forward"], variable=self.forward_var,
+                        command=self.app.save_prefs_quietly).pack(side="left", padx=8)
+        self.cancel_button = ttk.Button(cf, text=TEXT["cancel"], command=self._cancel_check)
+        self.cancel_button.pack(side="right")
+        self.check_button = ttk.Button(cf, text=TEXT["check_dns"], command=self.check_existing)
+        self.check_button.pack(side="right", padx=4)
+        self.progress = ttk.Progressbar(cf, length=120, mode="determinate")
+        self.progress.pack(side="right", padx=4)
+        self.cancel_button.state(["disabled"])
+        ttk.Label(box, text=TEXT["check_info"], foreground=GREY).pack(anchor="w")
 
         eb = ttk.Frame(box)
         eb.pack(fill="x")
@@ -1052,7 +1194,8 @@ class DnsTab(ttk.Frame):
 
     def _set_loading(self, busy):
         state = ["disabled"] if busy else ["!disabled"]
-        for b in (self.add_files_button, self.add_folder_button, self.gen_button):
+        for b in (self.add_files_button, self.add_folder_button, self.gen_button,
+                  self.check_button):
             b.state(state)
 
     def _add_files(self):
@@ -1117,11 +1260,22 @@ class DnsTab(ttk.Frame):
         self.paste.delete("1.0", "end")
 
     def _edit_abbreviations(self):
-        dlg = AbbreviationDialog(self, self.abbreviations)
+        dlg = AbbreviationDialog(self, self.abbreviations, self.excluded_types)
         self.wait_window(dlg)
         if dlg.result is not None:
-            self.abbreviations = dlg.result
-            self.app.save_prefs_quietly()
+            self.abbreviations, self.excluded_types = dlg.result
+            self._show_types()
+            self._settings_changed()
+
+    def _show_types(self):
+        self.types_var.set(TEXT["excl_types_n"].format(types=", ".join(self.excluded_types))
+                           if self.excluded_types else TEXT["excl_types_none"])
+
+    def _settings_changed(self):
+        """Save the settings; the table shows old results until Generate."""
+        self.app.save_prefs_quietly()
+        if self.result is not None:
+            self.app.status.set(TEXT["regen_needed"])
 
     # ---- generation ------------------------------------------------------
     def current_settings(self):
@@ -1132,7 +1286,12 @@ class DnsTab(ttk.Frame):
                 "include_secondary": bool(self.sec_var.get()),
                 "exclude_shutdown": bool(self.shut_var.get()),
                 "lowercase": bool(self.lower_var.get()),
-                "abbreviations": [list(p) for p in self.abbreviations]}
+                "abbreviations": [list(p) for p in self.abbreviations],
+                "excluded_types": list(self.excluded_types),
+                "exclude_unknown_types": bool(self.unknown_var.get()),
+                "exclude_patterns": split_list(self.patterns_var.get()),
+                "exclude_vrfs": split_list(self.vrfs_var.get()),
+                "check_forward": bool(self.forward_var.get())}
 
     def generate(self):
         pasted = self.paste.get("1.0", "end")
@@ -1149,6 +1308,8 @@ class DnsTab(ttk.Frame):
                       self._on_result, self._on_crash)
 
     def _on_crash(self, message):
+        self.check_cancel = None
+        self.cancel_button.state(["disabled"])
         self._set_loading(False)
         self.problem_var.set(TEXT["unexpected_error"] + ": " + message)
         self.app.status.set(TEXT["unexpected_error"])
@@ -1168,14 +1329,91 @@ class DnsTab(ttk.Frame):
 
     def _fill_table(self):
         self.table.delete(*self.table.get_children())
-        for record, row in self.rows:
-            if not record.is_record:
+        show_excluded = bool(self.show_excluded_var.get())
+        for i, (record, row) in enumerate(self.rows):
+            if record.excluded:
+                if not show_excluded:
+                    continue
+                tag = "excluded"
+            elif not record.is_record:
                 tag = "norecord"
-            elif record.warnings:
+            elif record.existing_kind == "conflict":
+                tag = "conflict"
+            elif record.warnings or record.existing_kind in ("no answer", "unknown"):
                 tag = "warn"
             else:
                 tag = "ok"
-            self.table.insert("", "end", values=row, tags=(tag,))
+            self.table.insert("", "end", iid=str(i), values=row, tags=(tag,))
+
+    # ---- DNS check (read-only nslookup) ------------------------------------
+    def check_existing(self):
+        if self.jobs.busy:
+            return
+        records = dns_check.checkable(self._records())
+        if not records:
+            self.app.status.set(TEXT["check_nothing"])
+            return
+        server = self.server_var.get().strip()
+        try:
+            dns_check.valid_server(server)
+        except ValueError as e:
+            messagebox.showwarning(TEXT["app_title"],
+                                   TEXT["check_bad_server"].format(err=e), parent=self)
+            return
+        self.app.save_prefs_quietly()
+        self.check_cancel = threading.Event()
+        self.check_progress = [0, len(records)]
+        self.progress.configure(maximum=len(records), value=0)
+        self._set_loading(True)
+        self.cancel_button.state(["!disabled"])
+
+        def progress(done, total):          # worker threads: plain data only
+            self.check_progress[0] = done
+
+        self.jobs.run(check_dns, (self._records(), server, bool(self.forward_var.get()),
+                                  self.check_cancel, progress),
+                      self._on_checked, self._on_crash)
+        self._poll_progress()
+
+    def _poll_progress(self):
+        if self.check_cancel is None:
+            return
+        done, total = self.check_progress
+        self.progress.configure(value=done)
+        self.app.status.set(TEXT["check_running"].format(done=done, total=total))
+        self.after(200, self._poll_progress)
+
+    def _cancel_check(self):
+        if self.check_cancel is not None:
+            self.check_cancel.set()
+
+    def _on_checked(self, n):
+        cancelled = self.check_cancel is not None and self.check_cancel.is_set()
+        self.check_cancel = None
+        self.cancel_button.state(["disabled"])
+        self._set_loading(False)
+        self.progress.configure(value=n)
+        self.rows = [(r, dns_names.record_row(r)) for r, _ in self.rows]
+        self._fill_table()
+        self.summary_var.set(dns_names.summary_text(self.result))
+        self.app.status.set((TEXT["check_cancelled"] if cancelled
+                             else TEXT["check_done"]).format(n=n))
+
+    def _show_lookup(self):
+        """Double-click: the raw nslookup output of the row."""
+        sel = self.table.selection()
+        if not sel:
+            return
+        record = self.rows[int(sel[0])][0]
+        win = tk.Toplevel(self)
+        win.title(TEXT["raw_title"] + " - " + (record.fqdn or record.ip))
+        win.transient(self.winfo_toplevel())
+        win.geometry("640x360")
+        frame, text = make_scrolled_text(win, height=16, font=("Consolas", 9))
+        frame.pack(fill="both", expand=True, padx=8, pady=8)
+        set_text(text, record.lookup_raw or TEXT["raw_none"])
+        ttk.Button(win, text=TEXT["ok"], command=win.destroy).pack(pady=(0, 8))
+        win.bind("<Escape>", lambda e: win.destroy())
 
     def _sort_by(self, col):
         last_col, desc = self.sort_state
@@ -1230,9 +1468,8 @@ class DnsTab(ttk.Frame):
         domain = self.current_settings().domain
         text = dns_names.to_powershell(self._records(), domain)
         try:
-            # UTF-8 with BOM and CRLF line ends, as Windows PowerShell expects.
-            with open(path, "w", encoding="utf-8-sig", newline="\r\n") as f:
-                f.write(text)
+            # UTF-8 with BOM; to_powershell already ends lines with CRLF.
+            Path(path).write_bytes(text.encode("utf-8-sig"))
         except OSError as e:
             messagebox.showerror(TEXT["app_title"], TEXT["save_failed"].format(err=e), parent=self)
             return
@@ -1244,7 +1481,8 @@ class DnsTab(ttk.Frame):
             return
         self.clipboard_clear()
         self.clipboard_append(dns_names.to_tsv(self._records(), header=True))
-        self.app.status.set(TEXT["table_copied"].format(n=len(self.rows)))
+        self.app.status.set(TEXT["table_copied"].format(
+            n=len(dns_names.exported(self._records()))))
 
     def collect_prefs(self, prefs):
         prefs["dns"] = self._dns_prefs()
